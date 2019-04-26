@@ -18,4 +18,7 @@ module.exports = function() {
   }, function(res, body) {
     body.should.equal('_');
   });
+  util.request('http://jsbody2.whistlejs.com/index.html?resBody=_', function(res, body) {
+    body.should.equal('<!DOCTYPE html>\r\n<script src="http://1"></script>\r\n0\r\n<script src="https://2"></script>');
+  });
 };

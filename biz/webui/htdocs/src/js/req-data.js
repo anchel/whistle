@@ -7,14 +7,15 @@ var QRCode = require('qrcode');
 var util = require('./util');
 var columns = require('./columns');
 var Dialog = require('./dialog');
-
 var FilterInput = require('./filter-input');
 var Spinner = require('./spinner');
 var ContextMenu = require('./context-menu');
 var events = require('./events');
 var dataCenter = require('./data-center');
+
 var HEIGHT = 24; //每条数据的高度
 var columnState = {};
+var CMD_RE = /^:dump\s+(\d{1,15})\s*$/;
 var NOT_BOLD_RULES = {
   plugin: 1,
   pac: 1,
@@ -28,6 +29,10 @@ var contextMenuList = [
   {
     name: 'Open',
     list: [
+      { name: 'Overview' },
+      { name: 'Inspectors' },
+      { name: 'Frames' },
+      { name: 'Timeline' },
       { name: 'New Tab'},
       { name: 'QR Code' },
       { name: 'Preview' }
@@ -42,33 +47,52 @@ var contextMenuList = [
       { name: 'Full URL' },
       { name: 'As CURL' },
       { name: 'Client IP' },
-      { name: 'Server IP' }
+      { name: 'Server IP' },
+      { name: 'Req Headers' },
+      { name: 'Res Headers' },
+      { name: 'Cookie' }
     ]
   },
   {
-    name: 'Show',
-    list:  [
-      { name: 'Overview' },
-      { name: 'Inspectors' },
-      { name: 'Frames' },
-      { name: 'Timeline' }
+    name: '+File',
+    list: [
+      { name: 'Req Body' },
+      { name: 'Res Body' },
+      { name: 'Req Raw' },
+      { name: 'Res Raw' }
     ]
   },
   {
     name: 'Remove',
     list:  [
-      { name: 'It' },
       { name: 'All' },
+      { name: 'One' },
       { name: 'Others' },
       { name: 'Selected' },
-      { name: 'Unselected' }
+      { name: 'Unselected' },
+      { name: 'All Such Host', action: 'removeAllSuchHost' },
+      { name: 'All Such URL', action: 'removeAllSuchURL' }
     ]
   },
-  { name: 'Composer' },
-  { name: 'Replay' },
-  { name: 'Upload' },
-  { name: 'Export' },
+  {
+    name: 'Filter',
+    list:  [
+      { name: 'Edit' },
+      { name: 'Exclude All Such Host', action: 'excludeHost' },
+      { name: 'Exclude All Such URL', action: 'excludeUrl' }
+    ]
+  },
+  {
+    name: 'Actions',
+    list: [
+      { name: 'Abort' },
+      { name: 'Replay' },
+      { name: 'Compose' }
+    ]
+  },
+  { name: 'Share' },
   { name: 'Import' },
+  { name: 'Export' },
   { name: 'Help', sep: true }
 ];
 
@@ -159,6 +183,23 @@ function getSelection() {
     return window.getSelection();
   }
   return document.getSelection();
+}
+
+function getFilename(item, type) {
+  var url = util.removeProtocol(item.url.replace(/[?#].*/, ''));
+  var index = url.lastIndexOf('/');
+  var name = index != -1 && url.substring(index + 1);
+  var isRaw = type[4] === 'r';
+  if (name) {
+    index = name.lastIndexOf('.');
+    if (index !== -1 && index < name.length - 1) {
+      return name.substring(0, index) + '_' + type + (isRaw ? '.txt' : '.' + name.substring(index + 1));
+    }
+  } else {
+    name = url.substring(0, url.indexOf('/'));
+  }
+  var suffix = isRaw ? '' : util.getExtension(type[2] === 'q' ? item.req.headers : item.res.headers);
+  return name + '_' + type + suffix;
 }
 
 var ReqData = React.createClass({
@@ -283,6 +324,80 @@ var ReqData = React.createClass({
     var modal = this.props.modal;
     modal && modal.clearSelection();
   },
+  getFilterList: function() {
+    var settings = dataCenter.getFilterText();
+    if (settings.disabledExcludeText) {
+      return [];
+    }
+    return settings.excludeText.trim().split(/\s+/g);
+  },
+  updateFilter: function(str) {
+    var settings = dataCenter.getFilterText();
+    settings.excludeText = str;
+    settings.disabledExcludeText = false;
+    dataCenter.setFilterText(settings);
+    events.trigger('filterChanged');
+  },
+  getActiveList: function(curItem) {
+    var modal = this.props.modal;
+    if (!modal || !curItem.selected) {
+      return [curItem];
+    }
+    return modal.getSelectedList();
+  },
+  removeAllSuchHost: function(item, justRemove) {
+    var hostList = [];
+    var list = this.getActiveList(item);
+    list.forEach(function(item) {
+      var host = item.isHttps ? item.path : item.hostname;
+      if (hostList.indexOf(host) === -1) {
+        hostList.push(host);
+      }
+    });
+    var modal = this.props.modal;
+    modal && modal.removeByHostList(hostList);
+    if (!justRemove) {
+      var filterList = this.getFilterList();
+      hostList.forEach(function(host) {
+        host = 'H:' + host;
+        if (filterList.indexOf(host) === -1) {
+          filterList.unshift(host);
+        }
+      });
+      this.updateFilter(filterList.join('\n'));
+    }
+    events.trigger('updateGlobal');
+  },
+  reselectRules: function(data, autoUpdate) {
+    var self = this;
+    self.state.rules.clearAllSelected();
+    self.setSelected(self.state.rules, 'Default', !data.defaultRulesIsDisabled, autoUpdate);
+    data.list.forEach(function(name) {
+      self.setSelected(self.state.rules, name, true, autoUpdate);
+    });
+  },
+  removeAllSuchURL: function(item, justRemove) {
+    var urlList = [];
+    var list = this.getActiveList(item);
+    list.forEach(function(item) {
+      var url = item.isHttps ? item.path : item.url.replace(/\?.*$/, '').substring(0, 1024);
+      if (urlList.indexOf(url) === -1) {
+        urlList.push(url);
+      }
+    });
+    var modal = this.props.modal;
+    modal && modal.removeByUrlList(urlList);
+    if (!justRemove) {
+      var filterList = this.getFilterList();
+      urlList.forEach(function(url) {
+        if (filterList.indexOf(url) === -1) {
+          filterList.unshift(url);
+        }
+      });
+      this.updateFilter(filterList.join('\n'));
+    }
+    events.trigger('updateGlobal');
+  },
   onClickContextMenu: function(action, e) {
     var self = this;
     var item = self.currentFocusItem;
@@ -326,7 +441,7 @@ var ReqData = React.createClass({
       events.trigger('activeItem', item);
       events.trigger('showTimeline');
       break;
-    case 'Composer':
+    case 'Compose':
       events.trigger('composer', item);
       break;
     case 'Replay':
@@ -335,7 +450,50 @@ var ReqData = React.createClass({
     case 'Export':
       events.trigger('exportSessions', item);
       break;
-    case 'Upload':
+    case 'Abort':
+      events.trigger('abortRequest', item);
+      break;
+    case 'Req Body':
+      events.trigger('showFilenameInput', {
+        title: 'Set the filename of request body',
+        base64: item.req.base64,
+        name: getFilename(item, 'req_body')
+      });
+      break;
+    case 'Res Body':
+      events.trigger('showFilenameInput', {
+        title: 'Set the filename of response body',
+        base64: item.res.base64,
+        name: getFilename(item, 'res_body')
+      });
+      break;
+    case 'Req Raw':
+      var req = item.req;
+      var realUrl = item.realUrl;
+      if (!realUrl || !/^(?:http|wss)s?:\/\//.test(realUrl)) {
+        realUrl = item.url;
+      }
+      var reqLine = [req.method, req.method == 'CONNECT' ? req.headers.host : util.getPath(realUrl),
+        'HTTP/' + (req.httpVersion || '1.1')].join(' ');
+      events.trigger('showFilenameInput', {
+        title: 'Set the filename of request raw data',
+        headers: reqLine + '\r\n' + util.objectToString(req.headers, req.rawHeaderNames, true),
+        base64: req.base64,
+        name: getFilename(item, 'req_raw')
+      });
+      break;
+    case 'Res Raw':
+      var res = item.res;
+      var statusLine = ['HTTP/' + (item.req.httpVersion || '1.1'), res.statusCode,
+        util.getStatusMessage(res)].join(' ');
+      events.trigger('showFilenameInput', {
+        title: 'Set the filename of response raw data',
+        headers: statusLine + '\r\n' + util.objectToString(res.headers, res.rawHeaderNames, true),
+        base64: item.res.base64,
+        name: getFilename(item, 'res_raw')
+      });
+      break;
+    case 'Share':
       events.trigger('uploadSessions', {
         curItem: item,
         upload: getUploadSessionsFn()
@@ -344,7 +502,22 @@ var ReqData = React.createClass({
     case 'Import':
       events.trigger('importSessions', e);
       break;
-    case 'It':
+    case 'Edit':
+      events.trigger('filterSessions', e);
+      break;
+    case 'removeAllSuchHost':
+      item && self.removeAllSuchHost(item, true);
+      break;
+    case 'removeAllSuchURL':
+      item && self.removeAllSuchURL(item, true);
+      break;
+    case 'excludeHost':
+      item && self.removeAllSuchHost(item);
+      break;
+    case 'excludeUrl':
+      item && self.removeAllSuchURL(item);
+      break;
+    case 'One':
       events.trigger('removeIt', item);
       break;
     case 'All':
@@ -372,13 +545,19 @@ var ReqData = React.createClass({
     e.preventDefault();
     this.currentFocusItem = item;
     contextMenuList[0].disabled = disabled;
-    contextMenuList[0].list[0].disabled = disabled || !/^https?:\/\//.test(item.url);
+    var list0 = contextMenuList[0].list;
+    list0[4].disabled = disabled || !/^https?:\/\//.test(item.url);
     if (disabled) {
-      contextMenuList[0].list[2].disabled = true;
+      list0[6].disabled = true;
     } else {
       var type = util.getContentType(item.res.headers);
-      contextMenuList[0].list[2].disabled = !item.res.base64 || (type !== 'HTML' && type !== 'IMG');
+      list0[6].disabled = !item.res.base64 || (type !== 'HTML' && type !== 'IMG');
     }
+    list0[0].disabled = disabled;
+    list0[1].disabled = disabled;
+    list0[2].disabled = (disabled || !item.frames);
+    list0[3].disabled = disabled;
+
     contextMenuList[1].disabled = disabled;
     contextMenuList[1].list.forEach(function(menu) {
       menu.disabled = disabled;
@@ -406,39 +585,74 @@ var ReqData = React.createClass({
         menu.disabled = !serverIp;
         menu.copyText = serverIp;
         break;
+      case 'Req Headers':
+        menu.copyText = item && util.objectToString(item.req.rawHeaders || item.req.headers);
+        menu.disabled = !menu.copyText;
+        break;
+      case 'Res Headers':
+        menu.copyText = item && util.objectToString(item.res.rawHeaders || item.res.headers);
+        menu.disabled = !menu.copyText;
+        break;
+      case 'Cookie':
+        var cookie = item && item.req.headers.cookie;
+        menu.disabled = !cookie;
+        menu.copyText = cookie;
+        break;
       }
     });
+
+    var list2 = contextMenuList[2].list;
     contextMenuList[2].disabled = disabled;
-    contextMenuList[2].list.forEach(function(menu) {
-      menu.disabled = disabled;
-    });
-    contextMenuList[2].list[2].disabled = (disabled || !item.frames);
+    for (var i = 0; i < 4; i++) {
+      list2[i].disabled = disabled;
+    }
+    if (!disabled) {
+      list2[0].disabled = !item.requestTime || !item.req.base64;
+      list2[1].disabled = !item.endTime || !item.res.base64;
+      list2[2].disabled = !item.requestTime;
+      list2[3].disabled = !item.endTime;
+    }
+
     var selectedList = modal.getSelectedList();
     var selectedCount = selectedList.length;
     var hasData = modal.list.length;
+    var list3 = contextMenuList[3].list;
     contextMenuList[3].disabled = !hasData;
-    contextMenuList[3].list.forEach(function(menu) {
-      menu.disabled = !hasData;
-    });
-    contextMenuList[3].list[0].disabled = disabled;
-    contextMenuList[3].list[2].disabled = hasData <= 1;
-    contextMenuList[3].list[3].disabled = !selectedCount;
-    contextMenuList[3].list[4].disabled = selectedCount === hasData;
-    contextMenuList[4].disabled = disabled;
+    list3[0].disabled = !hasData;
+    list3[1].disabled = disabled;
+    list3[2].disabled = disabled || selectedCount === hasData;
+    list3[3].disabled = !selectedCount;
+    list3[4].disabled = selectedCount === hasData;
+    list3[5].disabled = disabled;
+    list3[6].disabled = disabled;
+    
+    var list4 = contextMenuList[4].list;
+    list4[1].disabled = disabled;
+    list4[2].disabled = disabled;
+
+    contextMenuList[5].disabled = disabled;
+    var list5 = contextMenuList[5].list;
     if (item) {
+      list5[2].disabled = false;
       if (item.selected) {
-        contextMenuList[5].disabled = !selectedList.filter(util.canReplay).length;
+        list5[1].disabled = !selectedList.filter(util.canReplay).length;
+        list5[0].disabled = !selectedList.filter(util.canAbort).length;
       } else {
-        contextMenuList[5].disabled = !util.canReplay(item);
+        list5[1].disabled = !util.canReplay(item);
+        list5[0].disabled = !util.canAbort(item);
       }
     } else {
-      contextMenuList[5].disabled = true;
+      list5[0].disabled = true;
+      list5[1].disabled = true;
+      list5[2].disabled = true;
     }
+    
     var uploadItem = contextMenuList[6];
     uploadItem.hide = !getUploadSessionsFn();
-    contextMenuList[7].disabled = uploadItem.disabled = disabled && !selectedCount;
+    contextMenuList[8].disabled = uploadItem.disabled = disabled && !selectedCount;
     var data = util.getMenuPosition(e, 110, uploadItem.hide ? 280 : 310);
     data.list = contextMenuList;
+    data.className = data.marginRight < 260 ? 'w-ctx-menu-left' : '';
     this.refs.contextMenu.show(data);
   },
   onFilterChange: function(keyword) {
@@ -452,6 +666,15 @@ var ReqData = React.createClass({
     self.networkStateChangeTimer = setTimeout(function() {
       events.trigger('networkStateChange');
     }, 600);
+  },
+  onFilterKeyDown: function(e) {
+    if (e.keyCode !== 13 || !CMD_RE.test(e.target.value)) {
+      return;
+    }
+    dataCenter.setDumpCount(parseInt(RegExp.$1, 10));
+    var modal = this.props.modal;
+    modal && modal.clear();
+    this.refs.filterInput.clearFilterText();
   },
   autoRefresh: function() {
     if (this.container) {
@@ -541,7 +764,12 @@ var ReqData = React.createClass({
       endIndex = list.length;
     }
     var filterText = (state.filterText || '').trim();
-    var minWidth = {'min-width': columnList.length * 90 + 120 + 'px'};
+    var minWidth = 50;
+    // reduce
+    for (var i = 0, len = columnList.length; i < len; i++) {
+      minWidth += columnList[i].minWidth;
+    }
+    minWidth = {'min-width': minWidth + 'px'};
 
     return (
         <div className="fill w-req-data-con orient-vertical-box">
@@ -592,7 +820,8 @@ var ReqData = React.createClass({
                 </table>
             </div>
           </div>
-          <FilterInput onChange={this.onFilterChange} wStyle={minWidth} />
+          <FilterInput ref="filterInput" onKeyDown={this.onFilterKeyDown}
+            onChange={this.onFilterChange} wStyle={minWidth} />
           <ContextMenu onClick={this.onClickContextMenu} ref="contextMenu" />
           <Dialog ref="qrcodeDialog" wstyle="w-qrcode-dialog">
             <div className="modal-body">

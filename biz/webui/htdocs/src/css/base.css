@@ -1,5 +1,5 @@
 html, body, .main {margin: 0; padding: 0; width: 100%; height: 100%;}
-.main {min-width: 1060px; min-height: 560px;}
+.main {min-width: 1200px; min-height: 560px;}
 ::-webkit-scrollbar{ width:10px; height:10px; }
 ::-webkit-scrollbar-button{ width:10px;height:1px; }
 ::-webkit-scrollbar-thumb{ background-clip:padding-box; background-color:rgba(0,0,0,.5); border-radius:8px; min-height: 30px;}
@@ -13,6 +13,11 @@ pre {background: transparent; border: none; padding: 0; margin: 0; font-size: 12
 .n-monospace {
   font-family: monospace;
 }
+body .CodeMirror pre {
+  font-family: consolas, monospace;
+}
+
+.glyphicon-ban-circle { color: #f66; }
 
 .w-filter-input {width: 100%; background: rgba(0, 0, 0, 0.8); height: 30px; color: #fff; padding: 2px 5px; border: none; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc;}
 .shadow {border: 1px solid rgba(0,0,0,.15)!important; -webkit-box-shadow: 0 6px 12px rgba(0,0,0,.175)!important; box-shadow: 0 6px 12px rgba(0,0,0,.175)!important;}
@@ -26,9 +31,61 @@ textarea {resize: none; display: block; font-size: 12px;}
 .orient-vertical-box>.fill {height: 0;} /**不加这个滚动会有问题**/
 .table {table-layout: fixed; margin: 0!important;}
 .table .w-empty {text-align: center; font-style: italic; color: #ccc;}
+.w-expand-collapse {
+  margin-left: 5px;
+  height: 20px;
+  line-height: 16px;
+  font-size: 12px;
+  color: #000;
+}
+.w-arrow, .w-arrow::after {
+  position: absolute;
+  display: block;
+  width: 0;
+  height: 0;
+  border-color: transparent;
+  border-style: solid;
+}
+.w-arrow {
+  border-width: 7px;
+}
+.w-arrow::after {
+  content: "";
+  border-width: 6px;
+}
+
+.w-arrow-left {
+  top: 50%;
+  left: -7px;
+  margin-top: -7px;
+  border-right-color: #ccc;
+  border-right-color: rgba(0,0,0,.25);
+  border-left-width: 0;
+}
+.w-arrow-left::after {
+  bottom: -6px;
+  left: 1px;
+  border-right-color: #f1f3f4;
+  border-left-width: 0;
+}
+
+.w-arrow-right {
+  top: 50%;
+  right: -7px;
+  margin-top: -7px;
+  border-left-color: #ccc;
+  border-left-color: rgba(0,0,0,.25);
+  border-right-width: 0;
+}
+.w-arrow-right::after {
+  bottom: -6px;
+  right: 1px;
+  border-left-color: lightyellow;
+  border-right-width: 0;
+}
 
 .modal-dialog .modal-body, .modal-dialog .modal-footer {padding: 10px;}
-.modal-dialog .btn {padding: 5px 10px;}
+.modal-footer .btn {padding: 5px 10px;}
 
 .cm-header {text-decoration: line-through;}
 .cm-s-ambiance ::-webkit-scrollbar-thumb,
@@ -77,4 +134,27 @@ body .cm-s-cobalt span.cm-number {
 }
 .w-hide-no-value .w-no-value {
   display: none!important;
+}
+
+.w-detail .w-dock-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+  width: 20px;
+  text-align: center;
+  position: absolute;
+  right: 0;
+  top: 0;
+  outline: none;
+}
+.w-detail .w-dock-btn .glyphicon {
+  margin: 0!important;
+}
+
+.btn.active, .btn:active {
+  box-shadow: none!important;
+}
+
+.CodeMirror-hints {
+  z-index: 999999!important;
 }

@@ -68,9 +68,6 @@ module.exports = function() {
   util.request('http://local.whistlejs.com/whistle.test');
   util.request('https://local.whistlejs.com/plugin.test');
   util.request('http://local.whistlejs.com/plugin.test');
-  util.request('http://weinre.local.whistlejs.com/client/#anonymous');
-  util.request('http://weinre.local.whistlejs.com/target/target-script-min.js?doNotParseJson');
-  util.request('https://weinre.local.whistlejs.com/client/#anonymous');
   util.request({
     url: 'http://local.whistlejs.com/cgi-bin/log/get',
     headers: {
@@ -117,28 +114,12 @@ module.exports = function() {
     }
   });
   util.request({
-    url: 'http://local.whistlejs.com/cgi-bin/plugins/disable-plugin',
-    method: 'post'
-  });
-  util.request({
-    url: 'http://local.whistlejs.com/cgi-bin/plugins/disable-all-plugins',
-    method: 'post'
-  });
-  util.request({
-    url: 'http://local.whistlejs.com/cgi-bin/rules/disable-all-rules',
-    method: 'post'
-  });
-  util.request({
     url: 'http://local.whistlejs.com/cgi-bin/rules/add',
     method: 'post',
     form: {
       name: 'test',
       value: '/test/ file://xxx'
     }
-  });
-  util.request({
-    url: 'http://local.whistlejs.com/cgi-bin/rules/disable-default',
-    method: 'post'
   });
   util.request({
     url: 'http://local.whistlejs.com/cgi-bin/rules/enable-default',
@@ -228,7 +209,6 @@ module.exports = function() {
   util.request('http://local.wproxy.org:1234/index.html?doNotParseJson');
   util.request('http://local.wproxy.org:1234/cgi-bin/log/get');
   util.request('http://local.wproxy.org:1234/cgi-bin/init');
-  util.request('http://local.wproxy.org:1234/cgi-bin/init');
   util.request('http://local.wproxy.org:1234/cgi-bin/get-data');
   util.request('http://local.wproxy.org:1234/cgi-bin/server-info');
   util.request('http://local.wproxy.org:1234/cgi-bin/values/list');
@@ -239,7 +219,6 @@ module.exports = function() {
   util.request('https://local.wproxy.org:1234/index.html?doNotParseJson');
   util.request('https://local.wproxy.org:1234/cgi-bin/log/get');
   util.request('https://local.wproxy.org:1234/cgi-bin/init');
-  util.request('https://local.wproxy.org:1234/cgi-bin/init');
   util.request('https://local.wproxy.org:1234/cgi-bin/get-data');
   util.request('https://local.wproxy.org:1234/cgi-bin/server-info');
   util.request('https://local.wproxy.org:1234/cgi-bin/values/list');
@@ -249,8 +228,6 @@ module.exports = function() {
   util.request('http://local.wproxy.org:1234/whistle.test');
   util.request('https://local.wproxy.org:1234/plugin.test');
   util.request('http://local.wproxy.org:1234/plugin.test');
-  util.request('http://weinre.local.wproxy.org:1234/client/#anonymous');
-  util.request('https://weinre.local.wproxy.org:1234/client/#anonymous');
   util.request({
     url: 'http://local.wproxy.org:1234/cgi-bin/values/add',
     method: 'post',
@@ -285,28 +262,12 @@ module.exports = function() {
     }
   });
   util.request({
-    url: 'http://local.wproxy.org:1234/cgi-bin/plugins/disable-plugin',
-    method: 'post'
-  });
-  util.request({
-    url: 'http://local.wproxy.org:1234/cgi-bin/plugins/disable-all-plugins',
-    method: 'post'
-  });
-  util.request({
-    url: 'http://local.wproxy.org:1234/cgi-bin/rules/disable-all-rules',
-    method: 'post'
-  });
-  util.request({
     url: 'http://local.wproxy.org:1234/cgi-bin/rules/add',
     method: 'post',
     form: {
       name: 'test',
       value: '/test/ file://xxx'
     }
-  });
-  util.request({
-    url: 'http://local.wproxy.org:1234/cgi-bin/rules/disable-default',
-    method: 'post'
   });
   util.request({
     url: 'http://local.wproxy.org:1234/cgi-bin/rules/enable-default',
@@ -417,8 +378,6 @@ module.exports = function() {
   util.request('http://local.whistle.com/whistle.test');
   util.request('https://local.whistle.com/plugin.test');
   util.request('http://local.whistle.com/plugin.test');
-  util.request('http://weinre.local.whistle.com/client/#anonymous');
-  util.request('https://weinre.local.whistle.com/client/#anonymous');
   util.request({
     url: 'http://local.whistle.com/cgi-bin/values/add',
     method: 'post',
@@ -453,28 +412,12 @@ module.exports = function() {
     }
   });
   util.request({
-    url: 'http://local.whistle.com/cgi-bin/plugins/disable-plugin',
-    method: 'post'
-  });
-  util.request({
-    url: 'http://local.whistle.com/cgi-bin/plugins/disable-all-plugins',
-    method: 'post'
-  });
-  util.request({
-    url: 'http://local.whistle.com/cgi-bin/rules/disable-all-rules',
-    method: 'post'
-  });
-  util.request({
     url: 'http://local.whistle.com/cgi-bin/rules/add',
     method: 'post',
     form: {
       name: 'test',
       value: '/test/ file://xxx'
     }
-  });
-  util.request({
-    url: 'http://local.whistle.com/cgi-bin/rules/disable-default',
-    method: 'post'
   });
   util.request({
     url: 'http://local.whistle.com/cgi-bin/rules/enable-default',

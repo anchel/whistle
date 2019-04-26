@@ -1,15 +1,19 @@
 var http = require('http');
-var net = require('net');
-var config = require('../lib/config');
-var util = require('../lib/util');
+var config = require('../../../lib/config');
+var util = require('../../../lib/util');
 var zlib = require('../../../lib/util/zlib');
+var properties = require('../../../lib/rules/util').properties;
 var getSender = require('ws-parser').getSender;
 var hparser = require('hparser');
 
 var formatHeaders = hparser.formatHeaders;
 var getRawHeaders = hparser.getRawHeaders;
-var STATUS_CODE_RE = /^[^\s]+\s+(\d+)/i;
+var STATUS_CODE_RE = /^\S+\s+(\d+)/i;
 var MAX_LENGTH = 1024 * 512;
+var PROXY_OPTS = {
+  host: '127.0.0.1',
+  port: config.port
+};
 
 function parseHeaders(headers, rawHeaderNames) {
   if (!headers || typeof headers != 'string') {
@@ -22,13 +26,6 @@ function parseHeaders(headers, rawHeaderNames) {
   }
 
   return util.parseHeaders(headers, rawHeaderNames);
-}
-
-function getMethod(method) {
-  if (typeof method !== 'string') {
-    return 'GET';
-  }
-  return method.toUpperCase();
 }
 
 function isWebSocket(options) {
@@ -54,17 +51,22 @@ function handleConnect(options, cb) {
   options.headers['x-whistle-policy'] = 'tunnel';
   config.connect({
     host: options.hostname,
-    port: options.port,
+    port: options.port || 443,
     proxyHost: '127.0.0.1',
     proxyPort: config.port,
     headers: options.headers
-  }, function(socket) {
+  }, function(socket, res, err) {
     drain(socket);
     var data = util.toBuffer(options.body, getCharset(options.headers));
     if (data && data.length) {
       socket.write(data);
     }
-    cb && cb();
+    if (cb) {
+      cb(err);
+      util.onSocketEnd(socket, function(err) {
+        cb(err || new Error('Closed'));
+      });
+    }
   }).on('error', cb || util.noop);
 }
 
@@ -81,42 +83,47 @@ function handleWebSocket(options, cb) {
   }
   var binary = !!options.headers['x-whistle-frame-binary'];
   delete options.headers['x-whistle-frame-binary'];
-  var socket = net.connect(config.port, '127.0.0.1', function() {
-    socket.write(getReqRaw(options));
-    var handleResponse = function(resData) {
-      resData = resData + '';
-      var index = resData.indexOf('\r\n\r\n');
-      if (index !== -1) {
-        socket.removeListener('data', handleResponse);
-        socket.headers = parseHeaders(resData.slice(0, index));
-        var sender = getSender(socket);
-        var data = util.toBuffer(options.body, getCharset(socket.headers) || getCharset(options.headers));
-        if (data && data.length) {
-          sender.send(data, {
-            mask: true,
-            binary: binary
-          }, util.noop);
+  util.connect(PROXY_OPTS, function(err, socket) {
+    if (err) {
+      cb && cb(err);
+    } else {
+      socket.write(getReqRaw(options));
+      var handleResponse = function(resData) {
+        resData = resData + '';
+        var index = resData.indexOf('\r\n\r\n');
+        if (index !== -1) {
+          socket.removeListener('data', handleResponse);
+          socket.headers = parseHeaders(resData.slice(0, index));
+          var sender = getSender(socket);
+          var data = util.toBuffer(options.body, getCharset(socket.headers) || getCharset(options.headers));
+          if (data && data.length) {
+            sender.send(data, {
+              mask: true,
+              binary: binary
+            }, util.noop);
+          }
         }
-      }
+        if (cb) {
+          var statusCode = 0;
+          if (STATUS_CODE_RE.test(resData)) {
+            statusCode = parseInt(RegExp.$1, 10);
+          }
+          cb(null, {
+            statusCode: statusCode,
+            headers: socket.headers || {},
+            body: ''
+          });
+        }
+      };
+      socket.on('data', handleResponse);
       if (cb) {
-        var statusCode = 0;
-        if (STATUS_CODE_RE.test(resData)) {
-          statusCode = parseInt(RegExp.$1, 10);
-        }
-        cb(null, {
-          statusCode: statusCode,
-          headers: socket.headers || {},
-          body: ''
+        util.onSocketEnd(socket, function(err) {
+          cb(err || new Error('Closed'));
         });
       }
-    };
-    socket.on('data', handleResponse);
+      drain(socket);
+    }
   });
-  if (cb) {
-    socket.on('error', cb);
-  } else {
-    drain(socket);
-  }
 }
 
 function handleHttp(options, cb) {
@@ -165,12 +172,12 @@ module.exports = function(req, res) {
     return res.json({ec: 0});
   }
 
-  fullUrl = util.encodeNonAsciiChar(fullUrl.replace(/#.*$/, ''));
+  fullUrl = util.encodeNonLatin1Char(fullUrl.replace(/#.*$/, ''));
   var options = util.parseUrl(util.setProtocol(fullUrl));
   if (!options.host) {
     return res.json({ec: 0});
   }
-
+  properties.addHistory(req.body);
   var rawHeaderNames = {};
   var headers = parseHeaders(req.body.headers, rawHeaderNames);
   delete headers[config.WEBUI_HEAD];
@@ -184,7 +191,7 @@ module.exports = function(req, res) {
     headers[config.CLIENT_IP_HEAD] = clientIp;
   }
   headers[config.CLIENT_PORT_HEAD] = util.getClientPort(req);
-  options.method = getMethod(req.body.method);
+  options.method = util.getMethod(req.body.method);
 
   var isConn = isConnect(options);
   var isWs = !isConn && (isWebSocket(options)
@@ -208,7 +215,7 @@ module.exports = function(req, res) {
       if (isWs || isConn) {
         delete headers['content-length'];
       } else {
-        headers['content-length'] = body ? body.length : 0;
+        headers['content-length'] = body ? body.length : '0';
       }
     }
   } else {
@@ -217,13 +224,18 @@ module.exports = function(req, res) {
   delete headers['content-encoding'];
   options.headers = formatHeaders(headers, rawHeaderNames);
   var done;
-  var handleResponse = req.query.needResponse ? function(err, data) {
+  var needResponse = req.query.needResponse || req.body.needResponse;
+  var handleResponse = needResponse ? function(err, data) {
     if (done) {
       return;
     }
     done = true;
     if (err) {
-      res.json({ec: 2, em: err.stack});
+      res.json({ec: 0, res: {
+        statusCode:  err.statusCode ? parseInt(err.statusCode, 10) : 502,
+        headers: '',
+        body: err.stack
+      }});
       return;
     }
     res.json({ec: 0, em: 'success', res: data || ''});
@@ -245,6 +257,5 @@ module.exports = function(req, res) {
     }
     handleHttp(options);
   }
-
   res.json({ec: 0, em: 'success'});
 };

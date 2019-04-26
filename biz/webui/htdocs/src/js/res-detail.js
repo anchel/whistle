@@ -9,16 +9,8 @@ var BtnGroup = require('./btn-group');
 var Textarea = require('./textarea');
 var ImageView = require('./image-view');
 var JSONViewer = require('./json-viewer');
-var BTNS = [
-  {name: 'Headers'},
-  {name: 'Preview'},
-  {name: 'TextView'},
-  {name: 'JSONView'},
-  {name: 'HexView'},
-  {name: 'Cookies'},
-  {name: 'Raw'}
-];
 var COOKIE_HEADERS = ['Name', 'Value', 'Domain', 'Path', 'Expires', 'Max-Age', 'HttpOnly', 'Secure'];
+var SS_COOKIE_HEADERS = COOKIE_HEADERS.concat(['SameSite']);
 
 var ResDetail = React.createClass({
   getInitialState: function() {
@@ -29,7 +21,16 @@ var ResDetail = React.createClass({
       initedCookies: false,
       initedJSONView: false,
       initedHexView: false,
-      initedRaw: false
+      initedRaw: false,
+      btns: [
+        {name: 'Headers'},
+        {name: 'Preview'},
+        {name: 'TextView'},
+        {name: 'JSONView'},
+        {name: 'HexView'},
+        {name: 'Cookies'},
+        {name: 'Raw'}
+      ]
     };
   },
   shouldComponentUpdate: function(nextProps) {
@@ -47,14 +48,15 @@ var ResDetail = React.createClass({
   },
   render: function() {
     var state = this.state;
+    var btns = state.btns;
     var btn = state.btn;
     if (!btn) {
-      btn = BTNS[0];
+      btn = btns[0];
       this.selectBtn(btn);
     }
     var name = btn && btn.name;
     var modal = this.props.modal;
-    var res, rawHeaders, headers, cookies, body, raw, json, tips, defaultName, bin;
+    var res, rawHeaders, headersStr, headers, cookies, body, raw, json, tips, defaultName, base64, bin, hasSameSite;
     body = raw = '';
     if (modal) {
       res = modal.res;
@@ -62,6 +64,7 @@ var ResDetail = React.createClass({
       rawHeaders = res.rawHeaders;
       body = util.getBody(res);
       bin = util.getHex(res);
+      base64 = res.base64;
       headers = res.headers;
       json = util.getJson(res);
       if (headers && headers['set-cookie']) {
@@ -92,6 +95,10 @@ var ResDetail = React.createClass({
             case 'secure':
               row[7] = '√';
               break;
+            case 'samesite':
+              row[8] = cookie[i];
+              hasSameSite = true;
+              break;
             default:
               if (!row[0]) {
                 row[0] = i;
@@ -106,10 +113,12 @@ var ResDetail = React.createClass({
       var imgSrc, data, isJson;
       var isText = true;
       var status = res.statusCode;
-      var showImg = name === BTNS[1].name;
+      var showImg = name === btns[1].name;
       if (status != null) {
-        raw = ['HTTP/' + (modal.req.httpVersion || '1.1'), status, util.getStatusMessage(res)].join(' ')
-            + '\r\n' + util.objectToString(headers, res.rawHeaderNames) + '\r\n\r\n' + body;
+        headersStr = util.objectToString(headers, res.rawHeaderNames);
+        headersStr = ['HTTP/' + (modal.req.httpVersion || '1.1'), status, util.getStatusMessage(res)].join(' ')
+        + '\r\n' + headersStr;
+        raw = headersStr + '\r\n\r\n' + body;
         var type = util.getContentType(headers);
         isJson = type === 'JSON';
         if (type === 'IMG') {
@@ -123,11 +132,7 @@ var ResDetail = React.createClass({
       if (modal.isHttps) {
         tips = !body && { isHttps: true };
       } else if (headers && !body && modal.responseTime && !/^ws/.test(modal.url)) {
-        if (!res.size || util.isText(headers['content-type'])) {
-          tips = { message: res.size < 5120 ? 'No response body data' : 'Respose data too large to show' };
-        } else {
-          tips = { message: modal.type || 'Non Text' };
-        }
+        tips = { message: res.size < 5120 ? 'No response body data' : 'Respose data too large to show' };
         tips.url = modal.url;
       }
     }
@@ -144,17 +149,19 @@ var ResDetail = React.createClass({
         state.initedTextView = true;
       }
     }
+    base64 = base64 || '';
     return (
       <div className={'fill orient-vertical-box w-detail-content w-detail-response'
         + (util.getBoolean(this.props.hide) ? ' hide' : '')}>
-        <BtnGroup onClick={this.onClickBtn} btns={BTNS} />
-        {state.initedHeaders ? <div className={'fill w-detail-response-headers' + (name == BTNS[0].name ? '' : ' hide')}><Properties modal={rawHeaders || headers} enableViewSource="1" /></div> : undefined}
+        <BtnGroup onClick={this.onClickBtn} btns={btns} />
+        {state.initedHeaders ? <div className={'fill w-detail-response-headers' + (name == btns[0].name ? '' : ' hide')}><Properties modal={rawHeaders || headers} enableViewSource="1" /></div> : undefined}
         {state.initedPreview ? <ImageView imgSrc={imgSrc} data={data} hide={!showImg} /> : undefined}
-        {state.initedTextView ? <Textarea defaultName={defaultName} tips={tips} value={body} className="fill w-detail-response-textview" hide={name != BTNS[2].name} /> : undefined}
-        {state.initedJSONView ? <JSONViewer defaultName={defaultName} data={json} hide={name != BTNS[3].name} /> : undefined}
-        {state.initedHexView ? <Textarea defaultName={defaultName} value={bin} className="fill n-monospace w-detail-response-hex" hide={name != BTNS[4].name} /> : undefined}
-        {state.initedCookies ? <div className={'fill w-detail-response-cookies' + (name == BTNS[5].name ? '' : ' hide')}>{cookies && cookies.length ? <Table head={COOKIE_HEADERS} modal={cookies} /> : undefined}</div> : undefined}
-        {state.initedRaw ? <Textarea defaultName={defaultName} value={raw} className="fill w-detail-response-raw" hide={name != BTNS[6].name} /> : undefined}
+        {state.initedTextView ? <Textarea defaultName={defaultName} tips={tips} base64={base64} value={body} className="fill w-detail-response-textview" hide={name != btns[2].name} /> : undefined}
+        {state.initedJSONView ? <JSONViewer defaultName={defaultName} data={json} hide={name != btns[3].name} /> : undefined}
+        {state.initedHexView ? <Textarea defaultName={defaultName} isHexView="1" base64={base64} value={bin} className="fill n-monospace w-detail-response-hex" hide={name != btns[4].name} /> : undefined}
+        {state.initedCookies ? <div className={'fill w-detail-response-cookies' + (name == btns[5].name ? '' : ' hide')}>{cookies && cookies.length ? <Table head={hasSameSite ? SS_COOKIE_HEADERS : COOKIE_HEADERS} modal={cookies} /> : undefined}</div> : undefined}
+        {state.initedRaw ? <Textarea defaultName={defaultName} value={raw} headers={headersStr}
+          base64={base64} className="fill w-detail-response-raw" hide={name != btns[6].name} /> : undefined}
       </div>
     );
   }

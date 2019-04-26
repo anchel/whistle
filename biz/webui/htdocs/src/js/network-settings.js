@@ -37,23 +37,28 @@ var Settings = React.createClass({
     if (name === 'viewOwn') {
       dataCenter.setOnlyViewOwnData(target.checked);
       this.setState({});
-      this.props.onFilterTextChanged(true);
+      events.trigger('filterChanged');
       return;
     }
     var settings = this.state;
     var filterTextChanged;
-    var filterStateChanged;
     var columnsChanged;
     switch(name) {
     case 'filter':
       settings.disabledFilterText = !target.checked;
-      filterStateChanged = filterTextChanged = true;
+      filterTextChanged = true;
+      break;
+    case 'excludeFilter':
+      settings.disabledExcludeText = !target.checked;
+      filterTextChanged = true;
       break;
     case 'filterText':
-      var value = target.value.trim();
       filterTextChanged = true;
-      filterStateChanged = (!value && settings.filterText) || (value && !settings.filterText);
       settings.filterText = target.value;
+      break;
+    case 'excludeText':
+      filterTextChanged = true;
+      settings.excludeText = target.value;
       break;
     case 'networkColumns':
       settings.disabledColumns = !target.checked;
@@ -66,33 +71,16 @@ var Settings = React.createClass({
     }
     if (filterTextChanged) {
       dataCenter.setFilterText(settings);
-      if (filterStateChanged && typeof this.props.onFilterTextChanged === 'function') {
-        this.props.onFilterTextChanged();
-      }
+      events.trigger('filterChanged');
     } else if (columnsChanged) {
       events.trigger('onColumnsChanged');
     }
     this.setState(settings);
   },
   onFilterKeyDown: function(e) {
-    if ((e.ctrlKey || e.metaKey)) {
-      if (e.keyCode == 68) {
-        var settings = this.state;
-        if (settings.filterText) {
-          settings.filterText = '';
-          dataCenter.setFilterText(settings);
-          if (typeof this.props.onFilterTextChanged === 'function') {
-            this.props.onFilterTextChanged();
-          }
-        }
-        this.setState({ filterText: '' });
-        e.preventDefault();
-        e.stopPropagation();
-      } else if (e.keyCode == 88) {
-        e.stopPropagation();
-      }
+    if ((e.ctrlKey || e.metaKey) && e.keyCode == 88) {
+      e.stopPropagation();
     }
-
   },
   showDialog: function() {
     var settings = this.getNetworkSettings();
@@ -114,18 +102,34 @@ var Settings = React.createClass({
           <fieldset className="network-settings-filter">
             <legend>
               <label>
-                <input checked={!state.disabledFilterText} data-name="filter" type="checkbox" />Filter
+                <input checked={!state.disabledExcludeText} data-name="excludeFilter" type="checkbox" />Exclude Filter
               </label>
               <a className="w-help-menu"
                 title="Click here to learn how to use the filter"
-                href="https://avwo.github.io/whistle/webui/settings.html" target="_blank">
+                href="https://avwo.github.io/whistle/webui/filter.html" target="_blank">
+                <span className="glyphicon glyphicon-question-sign"></span>
+              </a>
+            </legend>
+            <textarea disabled={state.disabledExcludeText}
+              onKeyDown={this.onFilterKeyDown}
+              value={state.excludeText} data-name="excludeText"
+              placeholder="type filter text" maxLength={dataCenter.MAX_EXCLUDE_LEN} />
+          </fieldset>
+          <fieldset className="network-settings-filter">
+            <legend>
+              <label>
+                <input checked={!state.disabledFilterText} data-name="filter" type="checkbox" />Include Filter
+              </label>
+              <a className="w-help-menu"
+                title="Click here to learn how to use the filter"
+                href="https://avwo.github.io/whistle/webui/filter.html" target="_blank">
                 <span className="glyphicon glyphicon-question-sign"></span>
               </a>
             </legend>
             <textarea disabled={state.disabledFilterText}
               onKeyDown={this.onFilterKeyDown}
               value={state.filterText} data-name="filterText"
-              placeholder="type filter text" maxLength={300} />
+              placeholder="type filter text" maxLength={dataCenter.MAX_INCLUDE_LEN} />
           </fieldset>
           <fieldset className="network-settings-columns">
             <legend>

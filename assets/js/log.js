@@ -1,5 +1,5 @@
 
-(function() {
+;(function() {
   if (typeof window === 'undefined' || typeof Image === 'undefined') {
     return;
   }
@@ -209,20 +209,35 @@
     }
 
     if (obj instanceof Error) {
-      return obj.stack || obj.message;
+      var stack = obj.stack;
+      if (stack && typeof stack === 'string') {
+        if (obj.message && stack.indexOf(obj.message) === -1) {
+          return 'Error: ' + obj.message + '\n' + stack;
+        }
+      }
+      return 'Error: ' + obj.message;
     }
 
     return obj === undefined ? 'undefined' : obj;
   }
 
   var index = 0;
+  var MAX_LEN = 1024 * 56;
   function addLog(level, text) {
     var img = new Image();
     var timer;
     if (index > 9999) {
       index = 0;
     }
-    img.src ='$LOG_CGI?id=$LOG_ID&level=' + level + '&text=' + encodeURIComponent(text)
+    var logStr = encodeURIComponent(text && (text + ''));
+    if (logStr.length > MAX_LEN) {
+      logStr = logStr.substring(0, MAX_LEN);
+      var percIndex = logStr.indexOf('%', MAX_LEN - 3);
+      if (percIndex !== -1) {
+        logStr = logStr.substring(0, percIndex);
+      }
+    }
+    img.src ='$LOG_CGI?id=$LOG_ID&level=' + level + '&text=' + logStr
       + '&' + new Date().getTime() + '-' + ++index;
     var preventGC = function() {
       img.onload = img.onerror = null;
@@ -230,6 +245,9 @@
     };
     img.onload = img.onerror = preventGC;
     timer = setTimeout(preventGC, 3000);
+    if (typeof window.onWhistleLogSend === 'function') {
+      window.onWhistleLogSend(level, text);
+    }
   }
 
   function getPageInfo() {
@@ -248,26 +266,66 @@
     return stack + getPageInfo();
   }
 
+  function arrayIndexOf(arr, value) {
+    if (arr.indexOf) {
+      return arr.indexOf(value);
+    }
+    for (var i = 0, len = arr.length; i < len; i++) {
+      if (arr[i] === value) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function stringifyObj(obj) {
+    try {
+      return JSON.stringify(obj);
+    } catch(e) {}
+    try {
+      var keyList = [];
+      var valList = [];
+      return JSON.stringify(obj, function(key, value) {
+        if (value && typeof value === 'object') {
+          var index = arrayIndexOf(valList, value);
+          valList.push(value);
+          keyList.push(key);
+          if (index !== -1) {
+            return '[Circular ' + keyList[index] + ']';
+          }
+        }
+        return value;
+      });
+    } catch(e) {}
+  }
+
   var levels = ['fatal', 'error', 'warn', 'info', 'debug', 'log'];
   var noop = function() {};
+  var slice = Array.prototype.slice;
   for (var i = 0, len = levels.length; i < len; i++) {
-    var level = levels[i];
-    var fn = console[level] || noop;
     (function(level) {
+      var fn = console[level] || noop;
       var pending;
       var wFn = wConsole[level] = function() {
-        var result = [];
-        for (var i = 0, len = arguments.length; i < len; i++) {
-          result[i] = stringify(arguments[i]);
+        var result = slice.call(arguments);
+        if (typeof window.onBeforeWhistleLogSend === 'function') {
+          pending = true;
+          try {
+            window.onBeforeWhistleLogSend(result, level);
+          } catch(e) {
+            result.push('onBeforeWhistleLogSend' + stringify(e));
+          } finally {
+            pending = false;
+          }
+        }
+        for (var i = 0, len = result.length; i < len; i++) {
+          result[i] = stringify(result[i]);
         }
         if (!result.length) {
           result = ['undefined'];
         }
-        try {
-          addLog(level, JSON.stringify(result));
-        } catch(e) {
-          addLog('error', 'WhistleLogError: Can\`t stringify the object cause by:\n' + getErrorStack(e));
-        }
+        result = stringifyObj(result);
+        result && addLog(level, result);
       };
       console[level] = function() {
         if (pending) {
@@ -281,10 +339,15 @@
           } catch (e) {}
         }
         wFn.apply(null, arguments);
-        fn.apply(this, arguments);
-        pending = false;
+        try {
+          fn.apply(this, arguments);
+        } catch(e) {
+          fn(arguments.length < 2 ? arguments[0] : slice.apply(arguments));
+        } finally {
+          pending = false;
+        }
       };
-    })(level);
+    })(levels[i]);
   }
   /*eslint no-console: "off"*/
   var onerror = function(message, filename, lineno, colno, error) {

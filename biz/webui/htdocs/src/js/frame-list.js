@@ -5,6 +5,7 @@ var FilterInput = require('./filter-input');
 var DropDown = require('./dropdown');
 var dataCenter = require('./data-center');
 var events = require('./events');
+var RecordBtn = require('./record-btn');
 
 var SEND_PERATORS = [
   {
@@ -62,6 +63,8 @@ var FrameList = React.createClass({
     if (this.atBottom) {
       this.autoRefresh();
     }
+    var reqData = this.props.reqData;
+    reqData && this.refs.recordBtn.enable(!reqData.stopRecordFrames);
   },
   replay: function() {
     var reqData = this.props.reqData;
@@ -170,6 +173,29 @@ var FrameList = React.createClass({
   setContent: function(content) {
     this.content = ReactDOM.findDOMNode(content);
   },
+  handleAction: function(type) {
+    if (type === 'top') {
+      this.container.scrollTop = 0;
+      return;
+    }
+    if (type === 'bottom') {
+      return this.autoRefresh();
+    }
+    var refresh = type === 'refresh';
+    var reqData = this.props.reqData;
+    if (reqData) {
+      if (type === 'pause') {
+        reqData.stopRecordFrames = true;
+        reqData.pauseRecordFrames = true;
+        return;
+      }
+      reqData.pauseRecordFrames = false;
+      reqData.stopRecordFrames = !refresh;
+    }
+    if (refresh) {
+      return this.autoRefresh();
+    }
+  },
   render: function() {
     var self = this;
     var props = self.props;
@@ -180,22 +206,14 @@ var FrameList = React.createClass({
     var keyword = state.keyword;
     var activeItem = modal.getActive();
     var list = modal.getList();
-    if (!reqData.closed) {
-      var lastItem = list[list.length - 1];
-      if (lastItem && (lastItem.closed || lastItem.err)) {
-        reqData.closed = true;
-      }
-    }
+    util.socketIsClosed(reqData);
     return (<div className="fill orient-vertical-box w-frames-list">
       <FilterInput onChange={self.onFilterChange} />
       <div className="w-frames-action">
+        <RecordBtn ref="recordBtn" onClick={this.handleAction} disabledRecord={reqData.closed} />
         <a onClick={self.clear} className="w-remove-menu"
           href="javascript:;" draggable="false">
           <span className="glyphicon glyphicon-remove"></span>Clear
-        </a>
-        <a onClick={self.autoRefresh} onDoubleClick={self.stopRefresh} className="w-remove-menu"
-          href="javascript:;" draggable="false">
-          <span className="glyphicon glyphicon-play"></span>AutoRefresh
         </a>
         <a onClick={self.replay} className={'w-remove-menu' + ((!activeItem || reqData.closed) ? ' w-disabled' : '')}
           href="javascript:;" draggable="false">
@@ -203,7 +221,7 @@ var FrameList = React.createClass({
         </a>
         <a onClick={self.compose} className={'w-remove-menu' + (activeItem ? '' : ' w-disabled')}
           href="javascript:;" draggable="false">
-          <span className="glyphicon glyphicon-edit"></span>Composer
+          <span className="glyphicon glyphicon-edit"></span>Compose
         </a>
         <a onClick={self.abort} className={'w-remove-menu' + (reqData.closed ? ' w-disabled' : '')}
           href="javascript:;" draggable="false">
@@ -230,9 +248,9 @@ var FrameList = React.createClass({
         <ul ref={self.setContent}>
           {list.map(function(item) {
             var statusClass = '';
-            if (item.closed || item.err) {
+            if (item.closed || item.err || item.isError) {
               reqData.closed = item.closed;
-              reqData.err = item.err;
+              reqData.err = item.err || item.data;
               if (item.closed) {
                 statusClass = ' w-connection-closed';
               } else {

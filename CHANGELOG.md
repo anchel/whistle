@@ -1,3 +1,242 @@
+# v1.13.28
+1. style: Plugins添加 `UpdateAll` 按钮，方便获取更新所有有新版本插件的命令
+2. fix: whistle集群内部路径跳转问题
+3. fix: 设置代理时SNI出错问题
+
+# v1.13.27
+1. feat: 支持通过日志级别过滤日志内容
+2. style: 支持设置 `pattern enable://clientId|mutilClient` 启用请求带上clientId
+3. style: [log](http://wproxy.org/whistle/rules/log.html) 添加钩子 `window. onBeforeWhistleLogSend(result, level)` 用于自定义显示的日志内容，可以用来添加一些自定义详细日志信息
+4. feat: 支持通过 `pattern enable://gzip` 强制开启 `gzip` 模式
+
+# v1.13.26
+1. feat: 支持上传文件作为规则配置，解决远程部署是无法在Values设置大块内容的问题，详见：http://wproxy.org/whistle/webui/files.html
+2. feat: 支持显示包含WebSocket帧数据的saz文件
+3. feat: Log里面支持设置是否展开json对象的根节点
+
+# v1.13.25
+1. fix: 将weinre或log注入到缺少分号的js文件中出现的脚本错误问题
+2. refactor: 插件里面每个钩子占用一个随机端口改成整个插件最多只占用一个随机端口
+3. refactor: 优化插件配置 `whistle.xxx://value` 与 `xxx://value` 等价(无实现server钩子的情况下)
+4. refactor: 优化 [excludeFilter](http://wproxy.org/whistle/rules/filter.html) 和 [includeFilter](http://wproxy.org/whistle/rules/filter.html) 
+5. feat: 插件的uiServer支持WebSocket连接
+
+# v1.13.24
+1. fix: 重新设置port可能导致插件里面的 `req.getSession(cb)` 的回调无法执行问题
+
+# v1.13.23
+1. fix: https://github.com/avwo/whistle/issues/271
+
+# v1.13.22
+1. fix: http协议的websocket请求无法获取真实clientIp问题
+
+# v1.13.21
+1. feat: webui直接复用whistle的端口，不再独占一个端口，所以默认不再支持通过类似 `http://127.0.0.1:8900` 的方式访问ui，只能通过类似 `http://127.0.0.1:8899` 的方式访问(其中 `8899` 为代理端口)，如果需要ui另起一个端口，可以通过启动命令行参数 `-P xxxx` 设置
+2. feat: 直接通过whislte模块起服务时，支持获取server对象
+	```
+	const startWhistle = require('whistle');
+	const proxy = startWhistle({...});
+	console.log(proxy.server)
+	```
+3. feat: 显示所有响应内容(之前版本对二进制内容默认不显示)
+4. perf: 优化内部请求解析流程，提升whistle处理性能
+
+# v1.13.20
+1. fix: 替换带端口的url后 `req.headers.host` 的显示问题
+
+# v1.13.19
+# v1.13.18
+1. feat: 命令行添加 `--no-prev-options` 启动选项，支持通过 `w2 restart` 时不复用先前设置的选项
+2. refactor: 插件的内部规则 `_rules.txt` 改成 `reqRules.txt`
+3. fix: `www.test.com http://127.0.0.1:3000 log://` log不生效问题
+
+# v1.13.17
+1. feat: 本地替换新增响应206功能，支持iOS播放本地替换的视频文件
+
+# v1.13.16
+1. fix: [jsBody](http://wproxy.org/whistle/rules/jsBody.html)失效问题
+2. style: 精简Network的右键菜单
+
+# v1.13.15
+1. fix: 页面设置 `<meta http-equiv="Content-Security-Policy" content="script-src *.qq.com *.gtimg.cn *.gtimg.com 'unsafe-inline' 'unsafe-eval';"/>` ，导致 [log](http://wproxy.org/whistle/rules/log.html) 和 [weinre](http://wproxy.org/whistle/rules/weinre.html) 失效
+2. fix: `ServerPort` 显示问题及设置 `proxy://host:port?host=ip:port2 pattern` 时带上默认端口号问题（https: 443，http: 80）
+
+# v1.13.14
+1. style: HexView添加 `CopyHex` 按钮，支持Copy纯二进制
+2. feat: Frames/Composer支持输入HexText
+
+# v1.13.13
+1. feat: 插件支持通过package.json配置 `"pluginHomepage": "http://xxx.xxx.com/"` 自定义UI URL
+2. fix: 在iOS12里面log无法显示 `error.message` 的问题，参见：https://github.com/avwo/whistle/issues/257
+3. refactor: 优化插件错误输出，支持显示初始化错误
+
+# v1.13.12
+1. feat: 支持通过请求内容过滤 `pattern operation filter://b:pattern`
+2. feat: [log](http://wproxy.org/whistle/rules/log.html)支持注入 `whistle.onWhistleLogSend(level, logStr)` 获取页面日志信息自己做上报
+3. perf: 去掉本地请求的连接缓存，优化本地请求速度
+
+# v1.13.11
+1. fix: `pattern host://{key1}` 和 `pattern proxy://{key2}` 失效问题
+
+# v1.13.10
+1. refactor: 解决[log](http://wproxy.org/whistle/rules/log.html)里面显示循环引用对象的问题
+2. feat: 支持 `Stop Record`（默认）与 `Pause Record`，前者已存在，会忽略后续的抓包数据，后者只是暂停
+
+# v1.13.9
+# <del>v1.13.8</del>
+1. fix: [includeFilter](http://wproxy.org/whistle/rules/filter.html)、[excludeFilter](http://wproxy.org/whistle/rules/filter.html)无法匹配请求头问题，已经里面正则导致子匹配失效问题
+
+# v1.13.7
+1. perf: 优化界面性能
+2. style: Frames里面的 `AutoRefresh` 改为 `Record`
+3. fix: 页面Frames里面数据帧可能丢失的问题
+
+# v1.13.6
+1. style: Log里面的 `AutoRefresh` 改为 `Record`
+2. refactor: 不导出被过滤掉的日志
+3. refactor: `reqCors://*` 等价于 `reqCors://origin=*`
+4. feat: Network里面的右键菜单添加过滤快捷键，可以快速过滤指定域名或url
+5. feat: Network里面的Filter拆分成 `Exclude Filter` 和 `Include Filter`，分别用于设置不显示的抓包数据和要显示的抓包数据，具体功能参见：[webui/filter](http://wproxy.org/whistle/webui/filter.html)
+6. feat: [filter](http://wproxy.org/whistle/rules/filter.html) 分拆成语义更明确的 [excludeFilter](http://wproxy.org/whistle/rules/filter.html) 和 [includeFilter](http://wproxy.org/whistle/rules/filter.html)，且新增了通配符匹配
+
+# v1.13.5
+1. fix: 导入saz文件 `Set-Cookie` 等重名头部覆盖问题
+2. feat: 支持导入导出日志文件
+3. feat: `AutoRefresh` 改成 `Record`，可以手动关闭请求后台数据
+
+# v1.13.4
+1. fix: Network隐藏是按F12切换详情面板时高度可能变成0
+2. refactor: 支持插件更新提醒
+3. feat: Composer新增历史记录按钮，可以查看在Composer里请求过的记录
+4. feat: 避免一行配置过程，该版本引入换行功能
+	```
+	www.test.com file://(test) filter://*/cgi-bin
+	# 等价于
+	line`
+	www.test.com file://(test)
+	filter://*/cgi-bin
+	`
+	# 或
+	line`
+	www.test.com
+	file://(test)
+	filter://*/cgi-bin
+	`
+	```
+
+# v1.13.3
+1. feat: `***.xxx.com` (3个 `*` 及以上功能相同) 等价于 `**.xxx.com` + `xxx.com`，`^***.xxx.com` 同理
+2. feat: 模板字符串支持通过 `${xxx.replace(,defaultValue)}` 设置默认值
+3. feat: 支持切换详情右侧详情面板到底部
+4. perf: 缓解页面切换Inspectors时卡顿问题
+
+# v1.13.2
+1. style: 调整 `AutoRefresh` 的位置， `Abort` 按钮图标加警告色 
+2. feat: 在顶部菜单栏的 `Replay` 按钮下拉菜单添加 `Abort` 按钮，支持Abort掉处于pending状态的请求
+	![Abort](https://user-images.githubusercontent.com/11450939/48121171-30c26300-e2af-11e8-842c-7b3c7c7e6067.png)
+
+# v1.13.1
+1. fix: 启用 `customParser` 且延迟延迟响应可能导致连接自动断开的问题
+2. style: 高亮显示插件的 `EnableAll` 按钮
+
+# v1.13.0
+1. feat: 支持通过插件的 `tunnelServer` 及设置 `enable://customParser` 对tunnel请求(即：tpc请求或未拦截的https、websocket请求)自定义解包组包，参见：[whistle.custom-parser](https://github.com/whistle-plugins/whistle.custom-parser)
+2. feat: 支持在插件里面添加 `resRules.txt` 文件，用于设置静态规则，功能相当于 `resRulesServer` 吐出的规则
+3. feat: 支持在模板字符串里面获取插件规则的值 `pattern whistle.xxx://ruleValue` ，可以在插件的 `_rules.txt` 的模板字符串里面 `${whistle.xxx}` 获取 `ruleValue`，具体参见：[whistle.inspect](https://github.com/whistle-plugins/whistle.inspect/) 
+
+### v1.12.17
+1. feat: 插件列表添加 `Uninstall` 按钮，用于展示协助插件的方法
+2. refactor: 搜索列表时暂停自动滚动
+3. fix: `reqHeaders://Host=xxx.com` 的 `Host` 不支持忽略大小写的问题 
+4. fix: 内联 `Value` 可能被清空的问题
+
+### v1.12.16
+### v1.12.15
+1. fix: `www.test.com file:///User/xxx/test/` 配置 `http://www.test.com/?id=xxx` 无法匹配 `/User/xxx/test/index.html` 问题
+
+### v1.12.14
+1. fix: `ignore://host|xxx` 用 `|` 同时配置多个忽略属性失效的问题
+2. fix: 启用 `Back rules first` 且规则配置为空导致启动失败的问题[https://github.com/avwo/whistle/issues/230](https://github.com/avwo/whistle/issues/230))
+
+### v1.12.13
+1. feat: 支持从本地路径自动加载规则 `@~/xxx/test.txt`
+2. feat: 支持从插件接口加载规则：` @whistle.nohost/cgi-bin/global-rules`
+3. feat: 支持禁用响应内容压缩 `pattern disable://gzip`
+4. feat: [模板字符串](http://wproxy.org/whistle/data.html)支持`replace`，且支持子匹配
+	```
+	pattern protocol://`${search.replace(pattern1,replacment)}`
+	www.test.com file://`${search.replace(/Course_(id)\,?/ig,$1cid)}${test.html}`
+	```
+	`pattern1` 为正则或普通字符串(不需要加引号)
+
+> 其它功能参见：[@](http://wproxy.org/whistle/rules/@.html)
+
+### v1.12.12
+1. feat: 支持在Rules里面通过以下方式内联多行的Value:
+		
+		``` test.js
+		alert(1);
+		console.log(2);
+		// do sth
+		```
+	上述配置表示key为 `test.js`，value为:
+	```
+	alert(1);
+		console.log(2);
+		// do sth
+	```
+	这样可以通过类似以下方式引用该Value：
+	```
+	pattern protocol://{test.js}
+	```
+	
+### v1.12.11
+1. refactor: [reqCookies](http://wproxy.org/whistle/rules/reqCookies.html)、[resCookies](http://wproxy.org/whistle/rules/resCookies.html)里面的Value如果都为latin1字符则不进行encodeURIComponent
+2. refactor: debug状态下插件支持输出异步错误
+
+### v1.12.10
+1. feat: 支持通过在Rules配置中 `@https://rules.host.com/xxx` 的方式远程自动加载规则（支持http和https请求，直接返回规则配置）
+2. feat: 支持启动参数设置 `shadowRules`（只支持作为第三方模块传入，不支持命令行方式传入）
+3. fix: 修复 [filter://pattern](http://wproxy.org/whistle/rules/filter.html) 只能同时生效两个的问题
+
+### v1.12.9
+1. feat: 支持在规则里面用模板字符串，具体内容参见：[操作值](http://wproxy.org/whistle/data.html)
+2. style: 修改编辑器的字体，以便更好显示模板字符串
+
+### v1.12.8
+1. fix: Composer和Inspectors里面的Response可能出现联动的问题
+2. feat: [resCookies](http://wproxy.org/whistle/rules/resCookies.html)支持设置[SameSite](https://www.owasp.org/index.php/SameSite)
+
+### v1.12.7
+1. refactor: 调整抓包数据缓存策略，优化内存占用
+2. feat: 支持在Rules、Values、JSONView里面按住 `Ctrl[Command]+鼠标点击` 在新窗口打开链接
+3. feat: [resScript](http://wproxy.org/whistle/rules/resScript.html)协议支持 `filter://s:404`、`filter://resHeader:key=value`、`filter://serverIp:ip`
+
+### v1.12.6
+1. style: 优化Composer，支持展示 `Response` 数据
+2. feat: 支持通过 `filter://m:methodName`、`filter://i:clientIp`、`filter://h:key=subValue` 过滤规则，及支持取非 `filter://m:!methodName`、`filter://i:!clientIp`、`filter://h:key!=subValue`，`value` 也可以用正则 `/xxx/` 或 `/xxx/i` 替代
+3. feat: 删除对 `whistle-ssl` 特性的支持
+
+
+### v1.12.5
+1. refactor: 支持 `delete` 请求传递请求body
+2. feat: 支持配置IPv6的host，如：`pattern [fe80::2c6a:87c9:2ceb:d047]:8099` 或 `pattern fe80::2c6a:87c9:2ceb:d047`
+
+### v1.12.4
+1. fix: [proxy](http://wproxy.org/whistle/rules/proxy.html)设置的用户名和密码无法生效的问题
+
+### v1.12.3
+1. perf: 优化显示大文本的性能
+2. feat: 添加[https-proxy](http://wproxy.org/whistle/rules/https-proxy.html)协议，支持设置请求转发到上游https代理服务器
+3. feat: 为简化whistle的规则配置，该版本会删除以下使用比较少或配置比较复杂，且可以用其它方案替代的协议，点击链接可以查看替代方案：
+	- [dispatch](http://wproxy.org/whistle/rules/dispatch.html)
+	- [hostname](http://wproxy.org/whistle/rules/hostname.html)
+	- [etag](http://wproxy.org/whistle/rules/etag.html)
+	- [accept](http://wproxy.org/whistle/rules/accept.html)
+	- [location](http://wproxy.org/whistle/rules/location.html)
+	- [req](http://wproxy.org/whistle/rules/req.html)
+	- [res](http://wproxy.org/whistle/rules/res.html)
+
 ### v1.12.2
 1. fix: 选中状态自动更新可能会自动切换Changed状态
 2. style: 微调背景色，保持与 `Chrome 69+` 主色调一致
@@ -260,7 +499,7 @@ TypeError: Cannot read property 'res' of null
             return util.isLocalAddress(_ip || ip);
           },
           ip: ip,
-          headers: util.clone(req.headers),
+          headers: extend(true, {}, req.headers),
           body: body,
           rules: [],
           values: {},

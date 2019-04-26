@@ -12,10 +12,9 @@ var startWhistle = require('../index');
 var socks = require('socksv5');
 var util = require('./util.test');
 var config = require('./config.test');
+var events = require('./events');
 var values = util.getValues();
-var testList = fs.readdirSync(path.join(__dirname, './units')).map(function(name) {
-  return require('./units/' + name);
-});
+var testList = fs.readdirSync(path.join(__dirname, './units'));
 var defaultRules = fs.readFileSync(path.join(__dirname, 'rules.txt'), {encoding: 'utf8'});
 var options = {
   key: fs.readFileSync(path.join(__dirname, 'assets/certs/root.key')),
@@ -71,6 +70,9 @@ http.createServer(function(req, res) {
 }).listen(config.serverPort, startTest);
 
 https.createServer(options, function(req, res) {
+  if (req.url.indexOf('test-remote.rules') !== -1) {
+    return res.end('str2.w2.org/index.html file://`(${search.replace(a,b)})`\nstr2.w2.org/index2.html file://`(${query.replace(/a/g,b)})`');
+  }
   res.end(JSON.stringify({
     headers: req.headers,
     body: 'test'
@@ -89,7 +91,9 @@ var proxy = startWhistle({
   rules: {
     Default: defaultRules,
     test: {
-      rules: 'test.options.com file://{options.html}',
+      rules: 'test.options.com file://{options.html}\n@'
+        + path.join(__dirname, 'assets/files/rules.txt')
+        + '\n@https://127.0.0.1:' + config.httpsPort + '/test-remote.rules',
       enable: true
     },
     abc: '123'
@@ -217,15 +221,43 @@ function startTest() {
       return;
     }
     done = true;
-    testList.forEach(function(fn) {
-      fn();
+    var lastUnit = 'ui.test.js';
+    testList.splice(testList.indexOf(lastUnit), 1);
+    testList.splice(testList.indexOf('tplStr.test.js'), 1);
+    testList.push('tplStr.test.js');
+    testList = testList.map(function(name) {
+      return require('./units/' + name);
     });
+    lastUnit = require('./units/' + lastUnit);
+    var stride = 30;
+    var execUnit = function() {
+      var list = testList.slice(0, stride);
+      if (!list.length) {
+        util.setEnd();
+        lastUnit();
+        return true;
+      }
+      testList = testList.slice(stride);
+      list.forEach(function(fn) {
+        fn();
+      });
+    };
+    execUnit();
+    events.on('next', execUnit);
   }
-
+  var index = 0;
   (function getData() {
-    util.request('http://local.whistlejs.com/cgi-bin/get-data', function() {
+    var query = '?name=host&value=com&url=com';
+    var dataUrl = 'http://local.whistlejs.com/cgi-bin/get-data';
+    if (++index > 2) {
+      index = 0;
+      dataUrl += query + 'ip=self,1.1.1.1';
+    } else if (index === 1) {
+      dataUrl += query + 'ip=self';
+    }
+    util.request(dataUrl, function() {
       testAll();
-      setTimeout(getData, 5000);
+      setTimeout(getData, 10000);
     });
   })();
 }

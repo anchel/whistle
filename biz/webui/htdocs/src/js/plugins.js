@@ -2,10 +2,58 @@ require('../css/plugins.css');
 var $ = require('jquery');
 var React = require('react');
 var ReactDOM = require('react-dom');
-
+var events = require('./events');
 var Dialog = require('./dialog');
+var util = require('./util');
+
+function getPluginComparator(plugins) {
+  return function(a, b) {
+    var p1 = plugins[a];
+    var p2 = plugins[b];
+    if (p1.priority || p2.priority) {
+      return p1.priority > p2.priority ? -1 : 1;
+    }
+    return (p1.mtime > p2.mtime) ? 1 : -1;
+  };
+}
 
 var Home = React.createClass({
+  componentDidMount: function() {
+    var self = this;
+    self.setUpdateAllBtnState();
+    events.on('updateAllPlugins', function() {
+      var data = self.props.data || {};
+      var plugins = data.plugins || {};
+      var sudo = data.isWin ? '' : 'sudo ';
+      var newPlugins = {};
+      Object.keys(plugins).sort(getPluginComparator(plugins))
+      .map(function(name) {
+        var plugin = plugins[name];
+        if (!util.compareVersion(plugin.latest, plugin.version)) {
+          return;
+        }
+        var registry = plugin.registry ? ' --registry=' + plugin.registry : '';
+        var list = newPlugins[registry] || [];
+        list.push(plugin.moduleName);
+        newPlugins[registry] = list;
+      });
+      var cmdMsg = Object.keys(newPlugins).map(function(registry) {
+        var list = newPlugins[registry].join(' ');
+        return sudo + 'npm i -g ' + list + registry;
+      }).join('\n\n');
+      cmdMsg && self.setState({
+        cmdMsg: cmdMsg,
+        uninstall: false
+      }, self.showMsgDialog);
+    });
+  },
+  componentDidUpdate: function() {
+    this.setUpdateAllBtnState();
+  },
+  shouldComponentUpdate: function(nextProps) {
+    var hide = util.getBoolean(this.props.hide);
+    return hide != util.getBoolean(nextProps.hide) || !hide;
+  },
   onOpen: function(e) {
     this.props.onOpen && this.props.onOpen(e);
     e.preventDefault();
@@ -24,8 +72,8 @@ var Home = React.createClass({
       plugin: plugin
     }, this.showDialog);
   },
-  showUpdateDialog: function() {
-    this.refs.updatePluginDialog.show();
+  showMsgDialog: function() {
+    this.refs.operatePluginDialog.show();
   },
   showUpdate: function(e) {
     var name = $(e.target).attr('data-name');
@@ -33,8 +81,30 @@ var Home = React.createClass({
     var registry = plugin.registry ? ' --registry=' + plugin.registry : '';
     var sudo = this.props.data.isWin ? '' : 'sudo ';
     this.setState({
-      updateCmd: sudo + 'npm i -g ' + plugin.moduleName + registry
-    }, this.showUpdateDialog);
+      cmdMsg: sudo + 'npm i -g ' + plugin.moduleName + registry,
+      uninstall: false
+    }, this.showMsgDialog);
+  },
+  showUninstall: function(e) {
+    var name = $(e.target).attr('data-name');
+    var plugin = this.props.data.plugins[name + ':'];
+    var sudo = this.props.data.isWin ? '' : 'sudo ';
+    this.setState({
+      cmdMsg: sudo + 'npm uninstall -g ' + plugin.moduleName,
+      uninstall: true,
+      pluginPath: plugin.path
+    }, this.showMsgDialog);
+  },
+  enableAllPlugins: function(e) {
+    var data = this.props.data || {};
+    if ((!data.disabledAllRules && !data.disabledAllPlugins)
+        || !confirm('Do you want to enable all plugins?')) {
+      return;
+    }
+    events.trigger('disableAllPlugins', e);
+  },
+  setUpdateAllBtnState: function() {
+    events.trigger('setUpdateAllBtnState', this.hasNewPlugin);
   },
   render: function() {
     var self = this;
@@ -42,9 +112,12 @@ var Home = React.createClass({
     var plugins = data.plugins || [];
     var state = self.state || {};
     var plugin = state.plugin || {};
-    var updateCmd = state.updateCmd;
+    var cmdMsg = state.cmdMsg;
     var list = Object.keys(plugins);
     var disabledPlugins = data.disabledPlugins || {};
+    var disabled = data.disabledAllRules || data.disabledAllPlugins;
+    self.hasNewPlugin = false;
+
     return (
         <div className="fill orient-vertical-box w-plugins" style={{display: self.props.hide ? 'none' : ''}}>
           <div className="w-plugins-headers">
@@ -65,34 +138,37 @@ var Home = React.createClass({
           <div className="fill w-plugins-list">
             <table className="table table-hover">
               <tbody>
-                {list.length ? list.sort(function(a, b) {
-                  var p1 = plugins[a];
-                  var p2 = plugins[b];
-                  if (p1.priority || p2.priority) {
-                    return p1.priority > p2.priority ? -1 : 1;
-                  }
-                  return (p1.mtime > p2.mtime) ? 1 : -1;
-                }).map(function(name, i) {
+                {list.length ? list.sort(getPluginComparator(plugins))
+                .map(function(name, i) {
                   var plugin = plugins[name];
                   name = name.slice(0, -1);
                   var checked = !disabledPlugins[name];
-                  var disabled = data.disabledAllRules || data.disabledAllPlugins;
-                  var url = 'plugin.' + name + '/';
+                  var url = plugin.pluginHomepage || 'plugin.' + name + '/';
+                  var hasNew = util.compareVersion(plugin.latest, plugin.version);
+                  if (hasNew) {
+                    hasNew = '(New: ' + plugin.latest + ')';
+                    self.hasNewPlugin = true;
+                  }
                   return (
-                    <tr key={name} className={(!disabled && checked) ? '' : 'w-plugins-disable'}>
-                      <th className="w-plugins-order">{i + 1}</th>
-                      <td className="w-plugins-active">
-                        <input type="checkbox"  title={disabled ? 'Disabled' : (checked ? 'Disable ' : 'Enable ') + name}
+                    <tr key={name} className={((!disabled && checked) ? '' : 'w-plugins-disable') + (hasNew ? ' w-has-new-version' : '')}>
+                      <th className="w-plugins-order" onDoubleClick={self.enableAllPlugins}>{i + 1}</th>
+                      <td className="w-plugins-active" onDoubleClick={self.enableAllPlugins}>
+                        <input type="checkbox" title={disabled ? 'Disabled' : (checked ? 'Disable ' : 'Enable ') + name}
                           data-name={name} checked={checked} disabled={disabled} onChange={self.props.onChange} />
                       </td>
                       <td className="w-plugins-date">{new Date(plugin.mtime).toLocaleString()}</td>
-                      <td className="w-plugins-name" title={plugin.moduleName}><a href={url} target="_blank" data-name={name} onClick={self.onOpen}>{name}</a></td>
-                      <td className="w-plugins-version">{plugin.homepage ? <a href={plugin.homepage} target="_blank">{plugin.version}</a> : plugin.version}</td>
+                      <td className="w-plugins-name" title={plugin.moduleName}><a href={url} target="_blank" data-name={name} onClick={plugin.pluginHomepage ? null : self.onOpen}>{name}</a></td>
+                      <td className="w-plugins-version">
+                        {plugin.homepage ? <a href={plugin.homepage} target="_blank">{plugin.version}</a> : plugin.version}
+                        {hasNew ? (plugin.homepage ? <a href={plugin.homepage} target="_blank">{hasNew}</a> : <span>{hasNew}</span>) : undefined}
+                      </td>
                       <td className="w-plugins-operation">
-                        <a href={url} target="_blank" data-name={name} onClick={self.onOpen}>Option</a>
-                        {(plugin.rules || plugin._rules) ? <a href="javascript:;" draggable="false" data-name={name} onClick={self.showRules}>Rules</a> : <span className="disabled">Rules</span>}
-                        <a href="javascript:;" draggable="false" className="w-plugin-btn"
+                        <a href={url} target="_blank" data-name={name} onClick={plugin.pluginHomepage ? null : self.onOpen}>Option</a>
+                        {(plugin.rules || plugin._rules || plugin.resRules) ? <a href="javascript:;" draggable="false" data-name={name} onClick={self.showRules}>Rules</a> : <span className="disabled">Rules</span>}
+                        <a href="javascript:;" draggable="false" className="w-plugin-btn w-plugin-update-btn"
                           data-name={name} onClick={self.showUpdate}>Update</a>
+                        <a href="javascript:;" draggable="false" className="w-plugin-btn"
+                          data-name={name} onClick={self.showUninstall}>Uninstall</a>
                         {plugin.homepage ? <a href={plugin.homepage} className="w-plugin-btn"
                           target="_blank">Help</a> : <span className="disabled">Help</span>}
                       </td>
@@ -117,8 +193,12 @@ var Home = React.createClass({
                   <pre>{plugin.rules}</pre>
                 </fieldset>) : null}
                 {plugin._rules ? (<fieldset>
-                  <legend>_rules.txt</legend>
+                  <legend>reqRules.txt (_rules.txt)</legend>
                   <pre>{plugin._rules}</pre>
+                </fieldset>) : null}
+                {plugin.resRules ? (<fieldset>
+                  <legend>resRules.txt</legend>
+                  <pre>{plugin.resRules}</pre>
                 </fieldset>) : null}
               </div>
             </div>
@@ -126,23 +206,37 @@ var Home = React.createClass({
               <button type="button" className="btn btn-default" data-dismiss="modal">Close</button>
             </div>
           </Dialog>
-          <Dialog ref="updatePluginDialog" wstyle="w-plugin-update-dialog">
+          <Dialog ref="operatePluginDialog" wstyle="w-plugin-update-dialog">
             <div className="modal-body">
               <h5>
                 <a
                   href="javascript:;"
+                  data-dismiss="modal"
                   className="w-copy-text-with-tips"
-                  data-clipboard-text={updateCmd}
+                  data-clipboard-text={cmdMsg}
                 >
                   Copy the following command
                 </a> to the CLI to execute:
               </h5>
-              <div className="w-plugin-update-cmd">
-                  {updateCmd}
+              <pre className="w-plugin-update-cmd">
+                  {cmdMsg}
+              </pre>
+              <div style={{
+                margin: '8px 0 0',
+                color: 'red',
+                'word-break': 'break-all',
+                display: state.uninstall ? '' : 'none'
+              }}>
+                If uninstall failed, delete the following directory instead:
+                <a
+                  className="w-copy-text-with-tips"
+                  data-dismiss="modal"
+                  data-clipboard-text={state.pluginPath}
+                  style={{ marginLeft: 5, cursor: 'pointer' }}>{state.pluginPath}</a>
               </div>
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn btn-primary w-copy-text-with-tips" data-clipboard-text={updateCmd}>Copy</button>
+              <button type="button" data-dismiss="modal" className="btn btn-primary w-copy-text-with-tips" data-clipboard-text={cmdMsg}>Copy</button>
               <button type="button" className="btn btn-default" data-dismiss="modal">Close</button>
             </div>
           </Dialog>

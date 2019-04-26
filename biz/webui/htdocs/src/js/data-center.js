@@ -5,6 +5,8 @@ var NetworkModal = require('./network-modal');
 var storage = require('./storage');
 var events = require('./events');
 
+var MAX_INCLUDE_LEN = 5120;
+var MAX_EXCLUDE_LEN = 5120;
 var MAX_FRAMES_LENGTH = exports.MAX_FRAMES_LENGTH = 80;
 var MAX_COUNT = NetworkModal.MAX_COUNT;
 var TIMEOUT = 20000;
@@ -29,6 +31,8 @@ var hashFilterObj;
 var clearNetwork;
 var inited;
 var logId;
+var uploadFiles;
+var dumpCount = 0;
 var onlyViewOwnData = storage.get('onlyViewOwnData') == 1;
 var DEFAULT_CONF = {
   timeout: TIMEOUT,
@@ -37,10 +41,27 @@ var DEFAULT_CONF = {
   },
   data: {}
 };
+var whistlePort = /_whistleuipath_=(\d+)/.test(document.cookie);
+if (whistlePort) {
+  whistlePort = RegExp.$1;
+  if (!(whistlePort > 0 && whistlePort <= 65535)) {
+    whistlePort = null;
+  }
+}
+var BASE_URI = whistlePort ? '...whistle-path.5b6af7b9884e1165...///cgi.' + whistlePort + '/' : '';
 exports.clientIp = '127.0.0.1';
-
+exports.MAX_INCLUDE_LEN = MAX_INCLUDE_LEN;
+exports.MAX_EXCLUDE_LEN = MAX_EXCLUDE_LEN;
 exports.changeLogId = function(id) {
   logId = id;
+};
+
+exports.getUploadFiles = function() {
+  return uploadFiles;
+};
+
+exports.setDumpCount = function(count) {
+  dumpCount = count > 0 ? count : 0;
 };
 
 exports.setOnlyViewOwnData = function(enable) {
@@ -49,6 +70,18 @@ exports.setOnlyViewOwnData = function(enable) {
 };
 exports.isOnlyViewOwnData = function() {
   return onlyViewOwnData;
+};
+
+exports.filterIsEnabled = function() {
+  if (onlyViewOwnData) {
+    return true;
+  }
+  var settings = getFilterText();
+  if (!settings || (settings.disabledFilterText && settings.disabledExcludeText)) {
+    return;
+  }
+  var text = !settings.disabledFilterText && settings.filterText.trim();
+  return text || (!settings.disabledExcludeText && settings.excludeText.trim());
 };
 
 function compareFilter(filter) {
@@ -70,6 +103,8 @@ function handleHashFilterChanged(e) {
   var filter;
   if (index !== -1) {
     var obj = util.parseQueryString(hash.substring(index + 1), null, null, decodeURIComponent);
+    exports.activeRulesName = obj.rulesName || obj.ruleName;
+    exports.activeValuesName = obj.valuesName || obj.valueName;
     if (obj.url) {
       filter = {};
       filter.url = obj.url;
@@ -100,7 +135,9 @@ function setFilterText(settings) {
   settings = settings || {};
   storage.set('filterText', JSON.stringify({
     disabledFilterText: settings.disabledFilterText,
-    filterText: settings.filterText
+    filterText: settings.filterText,
+    disabledExcludeText: settings.disabledExcludeText,
+    excludeText: settings.excludeText
   }));
 }
 exports.setFilterText = setFilterText;
@@ -109,25 +146,15 @@ function getFilterText() {
   var settings = util.parseJSON(storage.get('filterText'));
   return settings ? {
     disabledFilterText: settings.disabledFilterText,
-    filterText: settings.filterText
-  } : {};
+    filterText: util.toString(settings.filterText).substring(0, MAX_INCLUDE_LEN),
+    disabledExcludeText: settings.disabledExcludeText,
+    excludeText: util.toString(settings.excludeText).substring(0, MAX_EXCLUDE_LEN)
+  } : {
+    filterText: '',
+    excludeText: ''
+  };
 }
 exports.getFilterText = getFilterText;
-
-function hasFilterText() {
-  var settings = getFilterText();
-  if (!settings || settings.disabledFilterText) {
-    return;
-  }
-  var filterText = settings.filterText;
-  if (typeof filterText !== 'string') {
-    return '';
-  }
-  filterText = filterText.trim();
-  return filterText;
-}
-
-exports.hasFilterText = hasFilterText;
 
 function setNetworkColumns(settings) {
   settings = settings || {};
@@ -145,35 +172,133 @@ function getNetworkColumns() {
 
 exports.getNetworkColumns = getNetworkColumns;
 
-var FILTER_TYPES_RE = /^(m|s|i|h|b|c):/;
+var FILTER_TYPES_RE = /^(m|i|h|b|c|d|H):/;
 var FILTER_TYPES = {
   m: 'method',
-  s: 'statusCode',
   i: 'ip',
   h: 'headers',
   b: 'body',
-  c: 'body'
+  c: 'body',
+  d: 'host',
+  H: 'host'
 };
-function parseFilterText() {
-  var filterText = hasFilterText();
-  if (!filterText) {
+var filterCache = [];
+
+function getFilterCache(text) {
+  var len = filterCache.length;
+  var result = len ? util.findArray(filterCache, function(item) {
+    return item.text === text;
+  }) : null;
+  len -= 10;
+  if (len > 2) {
+    filterCache = filterCache.slice(len);
+    if (result && filterCache.indexOf(result) === -1) {
+      filterCache.push(result);
+    }
+  }
+  return result && result.filter;
+}
+
+function resolveFilterText(text) {
+  text = text && text.trim();
+  if (!text) {
     return;
   }
-  filterText = filterText.split(/\r|\n/g);
-  var result = {};
-  filterText.forEach(function(line) {
-    line = line.trim();
+  var result = getFilterCache(text);
+  if (result) {
+    return result;
+  }
+  var pattern;
+  text.split(/\s+/).forEach(function(line) {
     if (FILTER_TYPES_RE.test(line)) {
-      var name = FILTER_TYPES[RegExp.$1];
-      line = line.substring(2);
+      var type = FILTER_TYPES[RegExp.$1];
+      var not = line[2] === '!';
+      line = line.substring(not ? 3 : 2);
       if (line) {
-        result[name] = result[name] ? result[name] + '\n' + line : line;
+        result = result || [];
+        pattern = util.toRegExp(line);
+        result.push({
+          type: type,
+          not: not,
+          pattern: pattern,
+          keyword: pattern ? null : line.toLowerCase()
+        });
       }
     } else if (line) {
-      result.url = result.url ? result.url + '\n' + line : line;
+      result = result || [];
+      pattern = util.toRegExp(line);
+      result.push({
+        pattern: pattern,
+        keyword: pattern ? null : line.toLowerCase()
+      });
     }
   });
+  if (result) {
+    filterCache.push({
+      text: text,
+      filter: result
+    });
+  }
   return result;
+}
+
+function checkFilterField(str, filter, needDecode) {
+  if (!str) {
+    return false;
+  }
+  var result;
+  if (filter.pattern) {
+    result = filter.pattern.test(str);
+  } else {
+    if (needDecode) {
+      try {
+        var text = decodeURIComponent(str);
+        if (text !== str) {
+          str += '\n' + text;
+        }
+      } catch(e) {}
+    }
+    result = toLowerCase(str).indexOf(filter.keyword) !== -1;
+  }
+  return filter.not ? !result : result;
+}
+
+function checkFilter(item, list) {
+  for (var i = 0, len = list.length; i < len; i++) {
+    var filter = list[i];
+    switch (filter.type) {
+    case 'method':
+      if (checkFilterField(item.method, filter)) {
+        return true;
+      }
+      break;
+    case 'ip':
+      if (checkFilterField(item.req.ip || '127.0.0.1', filter)) {
+        return true;
+      }
+      break;
+    case 'headers':
+      if (checkFilterField(util.objectToString(item.req.headers), filter, true)) {
+        return true;
+      }
+      break;
+    case 'host':
+      if (checkFilterField(item.isHttps ? item.path : util.getHost(item.url), filter)) {
+        return true;
+      }
+      break;
+    case 'body':
+      if (checkFilterField(util.getBody(item.req, true), filter)) {
+        return true;
+      }
+      break;
+    default:
+      if (checkFilterField(item.url, filter)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 var POST_CONF = $.extend({
@@ -183,8 +308,8 @@ var GET_CONF = $.extend({
   cache: false
 }, DEFAULT_CONF);
 var cgi = createCgi({
-  getData: 'cgi-bin/get-data',
-  getInitaial: 'cgi-bin/init'
+  getData: BASE_URI + 'cgi-bin/get-data',
+  getInitaial: BASE_URI + 'cgi-bin/init'
 }, GET_CONF);
 
 function toLowerCase(str) {
@@ -194,82 +319,87 @@ function toLowerCase(str) {
 exports.values = createCgi({
   moveTo: {
     mode: 'chain',
-    url: 'cgi-bin/values/move-to'
+    url: BASE_URI + 'cgi-bin/values/move-to'
   },
   list: {
     type: 'get',
-    url: 'cgi-bin/values/list'
+    url: BASE_URI + 'cgi-bin/values/list'
   },
-  add: 'cgi-bin/values/add',
-  remove: 'cgi-bin/values/remove',
-  rename: 'cgi-bin/values/rename'
+  add: BASE_URI + 'cgi-bin/values/add',
+  remove: BASE_URI + 'cgi-bin/values/remove',
+  rename: BASE_URI + 'cgi-bin/values/rename',
+  upload: BASE_URI + 'cgi-bin/values/upload',
+  checkFile: BASE_URI + 'cgi-bin/values/check-file',
+  removeFile: BASE_URI + 'cgi-bin/values/remove-file'
 }, POST_CONF);
 
 exports.plugins = createCgi({
-  disablePlugin: 'cgi-bin/plugins/disable-plugin',
-  disableAllPlugins: 'cgi-bin/plugins/disable-all-plugins',
+  disablePlugin: BASE_URI + 'cgi-bin/plugins/disable-plugin',
+  disableAllPlugins: BASE_URI + 'cgi-bin/plugins/disable-all-plugins',
   getPlugins: {
     type: 'get',
-    url: 'cgi-bin/plugins/get-plugins'
+    url: BASE_URI + 'cgi-bin/plugins/get-plugins'
   }
 }, POST_CONF);
 
 exports.rules = createCgi({
-  disableAllRules: 'cgi-bin/rules/disable-all-rules',
+  disableAllRules: BASE_URI + 'cgi-bin/rules/disable-all-rules',
   moveTo: {
     mode: 'chain',
-    url: 'cgi-bin/rules/move-to'
+    url: BASE_URI + 'cgi-bin/rules/move-to'
   },
   list: {
     type: 'get',
-    url: 'cgi-bin/rules/list'
+    url: BASE_URI + 'cgi-bin/rules/list'
   },
-  add: 'cgi-bin/rules/add',
-  disableDefault: 'cgi-bin/rules/disable-default',
-  enableDefault: 'cgi-bin/rules/enable-default',
-  remove: 'cgi-bin/rules/remove',
-  rename: 'cgi-bin/rules/rename',
-  select: 'cgi-bin/rules/select',
-  unselect: 'cgi-bin/rules/unselect',
+  add: BASE_URI + 'cgi-bin/rules/add',
+  disableDefault: BASE_URI + 'cgi-bin/rules/disable-default',
+  enableDefault: BASE_URI + 'cgi-bin/rules/enable-default',
+  remove: BASE_URI + 'cgi-bin/rules/remove',
+  rename: BASE_URI + 'cgi-bin/rules/rename',
+  select: BASE_URI + 'cgi-bin/rules/select',
+  unselect: BASE_URI + 'cgi-bin/rules/unselect',
   allowMultipleChoice: {
     mode: 'ignore',
-    url: 'cgi-bin/rules/allow-multiple-choice'
+    url: BASE_URI + 'cgi-bin/rules/allow-multiple-choice'
   },
   enableBackRulesFirst: {
     mode: 'ignore',
-    url: 'cgi-bin/rules/enable-back-rules-first'
+    url: BASE_URI + 'cgi-bin/rules/enable-back-rules-first'
   },
-  syncWithSysHosts: 'cgi-bin/rules/sync-with-sys-hosts',
-  setSysHosts: 'cgi-bin/rules/set-sys-hosts',
-  getSysHosts: 'cgi-bin/rules/get-sys-hosts'
+  syncWithSysHosts: BASE_URI + 'cgi-bin/rules/sync-with-sys-hosts',
+  setSysHosts: BASE_URI + 'cgi-bin/rules/set-sys-hosts',
+  getSysHosts: BASE_URI + 'cgi-bin/rules/get-sys-hosts'
 }, POST_CONF);
 
 exports.log = createCgi({
-  set: 'cgi-bin/log/set'
+  set: BASE_URI + 'cgi-bin/log/set'
 }, POST_CONF);
 
 $.extend(exports, createCgi({
-  composer: 'cgi-bin/composer',
-  interceptHttpsConnects: 'cgi-bin/intercept-https-connects'
+  composer: BASE_URI + 'cgi-bin/composer',
+  interceptHttpsConnects: BASE_URI + 'cgi-bin/intercept-https-connects',
+  abort: BASE_URI + 'cgi-bin/abort'
 }, POST_CONF));
 $.extend(exports, createCgi({
-  donotShowAgain: 'cgi-bin/do-not-show-again',
-  checkUpdate: 'cgi-bin/check-update',
-  importRemote: 'cgi-bin/import-remote'
+  donotShowAgain: BASE_URI + 'cgi-bin/do-not-show-again',
+  checkUpdate: BASE_URI + 'cgi-bin/check-update',
+  importRemote: BASE_URI + 'cgi-bin/import-remote',
+  getHistory: BASE_URI + 'cgi-bin/history'
 }, GET_CONF));
 
 exports.socket = $.extend(createCgi({
   changeStatus: {
     mode: 'cancel',
-    url: 'cgi-bin/socket/change-status'
+    url: BASE_URI + 'cgi-bin/socket/change-status'
   },
   abort: {
     mode: 'ignore',
-    url: 'cgi-bin/socket/abort'
+    url: BASE_URI + 'cgi-bin/socket/abort'
   },
   send: {
     mode: 'ignore',
-    url: 'cgi-bin/socket/data'
+    url: BASE_URI + 'cgi-bin/socket/data'
   }
 }, POST_CONF));
 
@@ -282,6 +412,7 @@ exports.getInitialData = function (callback) {
         if (!data) {
           return setTimeout(load, 1000);
         }
+        uploadFiles = data.uploadFiles;
         initialData = data;
         DEFAULT_CONF.data.clientId = data.clientId;
         if (data.lastLogId) {
@@ -294,9 +425,9 @@ exports.getInitialData = function (callback) {
           lastRowId = data.lastDataId;
         }
         exports.upload = createCgi({
-          importSessions: 'cgi-bin/sessions/import?clientId=' + data.clientId,
-          importRules: 'cgi-bin/rules/import?clientId=' + data.clientId,
-          importValues: 'cgi-bin/values/import?clientId=' + data.clientId
+          importSessions: BASE_URI + 'cgi-bin/sessions/import?clientId=' + data.clientId,
+          importRules: BASE_URI + 'cgi-bin/rules/import?clientId=' + data.clientId,
+          importValues: BASE_URI + 'cgi-bin/values/import?clientId=' + data.clientId
         }, $.extend({
           type: 'post'
         }, DEFAULT_CONF, {
@@ -315,91 +446,6 @@ exports.getInitialData = function (callback) {
 
   initialDataPromise.done(callback);
 };
-
-function checkFiled(keyword, text, needDecode) {
-  if (!keyword) {
-    return true;
-  }
-  if (!text) {
-    return false;
-  }
-  keyword = toLowerCase(keyword);
-  keyword = keyword.split(/\n/g);
-  if (needDecode) {
-    try {
-      var dtext = decodeURIComponent(text);
-      if (dtext !== text) {
-        text += '\n' + dtext;
-      }
-    } catch(e) {}
-  }
-  text = toLowerCase(text);
-  var check = function(kw) {
-    if (!kw) {
-      return false;
-    }
-    kw = kw.split(/\s+/g);
-    return checkKeyword(text, kw[0]) && checkKeyword(text, kw[1]) && checkKeyword(text, kw[2]);
-  };
-
-  return check(keyword[0]) || check(keyword[1]) || check(keyword[2]);
-}
-
-function checkKeyword(text, kw) {
-  if (!kw || kw === '!') {
-    return true;
-  }
-  var not;
-  if (kw[0] === '!') {
-    not = true;
-    kw = kw.substring(1);
-  }
-  kw = text.indexOf(kw);
-  return not ? kw === -1 : kw !== -1;
-}
-
-function joinString(str1, str2) {
-  var result = [];
-  if (str1 != null || str1) {
-    result.push(str1);
-  }
-  if (str2 == null || str2) {
-    result.push(str2);
-  }
-  return result.join('\n');
-}
-
-function filterData(obj, item) {
-  if (!obj) {
-    return true;
-  }
-  if (!checkFiled(obj.url, item.url)) {
-    return false;
-  }
-  if (!checkFiled(obj.statusCode, item.res.statusCode)) {
-    return false;
-  }
-  if (!checkFiled(obj.method, item.req.method)) {
-    return false;
-  }
-  if (obj.ip) {
-    if (!checkFiled(obj.ip, joinString(item.req.ip, item.res.ip))) {
-      return false;
-    }
-  }
-  if (obj.body) {
-    if (!checkFiled(obj.body, joinString(util.getBody(item.req, true), util.getBody(item.res)))) {
-      return false;
-    }
-  }
-  if (obj.headers) {
-    if (!checkFiled(obj.headers, joinString(util.objectToString(item.req.headers),
-      util.objectToString(item.res.headers)), true)) {
-      return false;
-    }
-  }
-  return true;
-}
 
 function checkDataChanged(data, mclientName, mtimeName) {
   if (!data[mtimeName] || initialData.clientId === data[mclientName]) {
@@ -445,31 +491,33 @@ function startLoadData() {
     var startLogTime = -1;
     var startSvrLogTime = -1;
 
-    if (!len) {
+    if (!exports.pauseConsoleRefresh && len < 100) {
       startLogTime = lastPageLogTime;
-    } else if (len < 100) {
-      startLogTime = logList[len - 1].id;
     }
 
-    if (!svrLen) {
+    if (!exports.pauseServerLogRefresh && svrLen < 70) {
       startSvrLogTime = lastSvrLogTime;
-    } else if (svrLen < 70) {
-      startSvrLogTime = svrLogList[svrLen - 1].id;
     }
 
     var curActiveItem = networkModal.getActive();
     var curFrames = curActiveItem && curActiveItem.frames;
     var lastFrameId, curReqId;
-    if (curFrames && curFrames.length <= MAX_FRAMES_LENGTH) {
-      curReqId = curActiveItem.id;
-      lastFrameId = curActiveItem.lastFrameId;
+    if (curFrames && !curActiveItem.pauseRecordFrames) {
+      if (curActiveItem.stopRecordFrames) {
+        curReqId = curActiveItem.id;
+        lastFrameId = -3;
+      } else if (curFrames.length <= MAX_FRAMES_LENGTH) {
+        curReqId = curActiveItem.id;
+        lastFrameId = curActiveItem.lastFrameId;
+      }
     }
     var count = inited ? 20 : networkModal.getDisplayCount();
     var options = {
-      startLogTime: startLogTime,
-      startSvrLogTime: startSvrLogTime,
+      startLogTime: exports.stopConsoleRefresh ? -3 : startLogTime,
+      startSvrLogTime: exports.stopServerLogRefresh ? -3 : startSvrLogTime,
       ids: pendingIds.join(),
       startTime: startTime,
+      dumpCount: dumpCount,
       lastRowId: (inited || !count)  ? lastRowId : undefined,
       curReqId: curReqId,
       lastFrameId: lastFrameId,
@@ -487,6 +535,9 @@ function startLoadData() {
       updateServerInfo(data);
       if (!data || data.ec !== 0) {
         return;
+      }
+      if (options.dumpCount > 0) {
+        dumpCount = 0;
       }
       if (data.clientIp) {
         exports.clientIp = data.clientIp;
@@ -513,13 +564,22 @@ function startLoadData() {
           cb(logList, svrLogList);
         });
       }
+      if (data.lastLogId) {
+        lastPageLogTime = data.lastLogId;
+      }
+      if (data.lastSvrLogId) {
+        lastSvrLogTime = data.lastSvrLogId;
+      }
 
       data = data.data;
       var hasChhanged;
       var framesLen = data.frames && data.frames.length;
+
       if (framesLen) {
         curActiveItem.lastFrameId = data.frames[framesLen - 1].frameId;
         curFrames.push.apply(curFrames, data.frames);
+      } else if (data.lastFrameId) {
+        curActiveItem.lastFrameId = data.lastFrameId;
       }
       if (curReqId) {
         var status = data.socketStatus;
@@ -559,17 +619,23 @@ function startLoadData() {
         var newItem = data[item.id];
         if (newItem) {
           $.extend(item, newItem);
+          if (item.rules && item.codec) {
+            item.rules.codec = item.codec;
+          }
           setReqData(item);
         } else {
           item.lost = true;
         }
       });
       if (ids.length) {
-        var filterObj = parseFilterText();
+        var filter = getFilterText();
+        var excludeFilter = filter.disabledExcludeText ? null : resolveFilterText(filter.excludeText);
+        var includeFilter = filter.disabledFilterText ? null : resolveFilterText(filter.filterText);
         ids.forEach(function (id) {
           var item = data[id];
           if (item) {
-            if (filterData(filterObj, item)) {
+            if ((!excludeFilter || !checkFilter(item, excludeFilter))
+              && (!includeFilter || checkFilter(item, includeFilter))) {
               setReqData(item);
               dataList.push(item);
             }
@@ -592,9 +658,7 @@ function setRawHeaders(obj) {
   }
   var rawHeaders = {};
   Object.keys(headers).forEach(function (name) {
-    if (name !== 'x-whistle-https-request' && name.indexOf('x-forwarded-from-whistle-') !== 0) {
-      rawHeaders[rawHeaderNames[name] || name] = headers[name];
-    }
+    rawHeaders[rawHeaderNames[name] || name] = headers[name];
   });
   obj.rawHeaders = rawHeaders;
 }
@@ -603,10 +667,10 @@ function isSocket(item) {
   if (!item || !item.endTime || item.reqError || item.resError) {
     return false;
   }
-  if (/^wss?:\/\//.test(item.url) || item.inspect) {
-    return true;
+  if (/^wss?:\/\//.test(item.url)) {
+    return item.res.statusCode == 101;
   }
-  return item.isHttps && item.req.headers['x-whistle-policy'] === 'tunnel';
+  return item.inspect || (item.isHttps && item.req.headers['x-whistle-policy'] === 'tunnel');
 }
 
 function setReqData(item) {
@@ -715,7 +779,7 @@ function getStartTime() {
   if (!inited) {
     return clearNetwork ? -2 : '';
   }
-  if (dataList.length - 1 > MAX_COUNT) {
+  if (dataList.length - 1 > MAX_COUNT || exports.stopRefresh) {
     return -1;
   }
   return lastRowId || '0';
@@ -740,6 +804,10 @@ function updateServerInfo(data) {
     return;
   }
   updateCount = 0;
+  if (curServerInfo && curServerInfo.strictMode != data.strictMode) {
+    curServerInfo.strictMode = data.strictMode;
+    events.trigger('updateStrictMode');
+  }
   if (curServerInfo && curServerInfo.version == data.version &&
     curServerInfo.networkMode === data.networkMode && curServerInfo.multiEnv === data.multiEnv &&
     curServerInfo.baseDir == data.baseDir && curServerInfo.username == data.username &&
@@ -757,6 +825,9 @@ function updateServerInfo(data) {
 
 exports.isMutilEnv = function() {
   return curServerInfo && curServerInfo.multiEnv;
+};
+exports.isStrictMode = function() {
+  return (curServerInfo && curServerInfo.strictMode) || false;
 };
 
 exports.on = function (type, callback) {
@@ -784,4 +855,39 @@ exports.on = function (type, callback) {
       framesUpdateCallbacks.push(callback);
     }
   }
+};
+
+exports.stopNetworkRecord = function(stop) {
+  if (!stop && exports.pauseRefresh) {
+    networkModal.clearNetwork = false;
+  } else {
+    networkModal.clearNetwork = !stop;
+  }
+  exports.pauseRefresh = false;
+  exports.stopRefresh = stop;
+};
+exports.pauseNetworkRecord = function() {
+  networkModal.clearNetwork = false;
+  exports.pauseRefresh = true;
+  exports.stopRefresh = true;
+};
+
+exports.pauseConsoleRecord = function() {
+  exports.stopConsoleRefresh = false;
+  exports.pauseConsoleRefresh = true;
+};
+
+exports.stopConsoleRecord = function(stop) {
+  exports.pauseConsoleRefresh = false;
+  exports.stopConsoleRefresh = stop;
+};
+
+exports.pauseServerLogRecord = function() {
+  exports.stopServerLogRefresh = false;
+  exports.pauseServerLogRefresh = true;
+};
+
+exports.stopServerLogRecord = function(stop) {
+  exports.pauseServerLogRefresh = false;
+  exports.stopServerLogRefresh = stop;
 };

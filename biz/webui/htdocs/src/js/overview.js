@@ -18,7 +18,22 @@ var OVERVIEW_PROPS = ['url', 'realUrl', 'req.method', 'req.httpVersion', 'res.st
 var PROTOCOLS = require('./protocols').PROTOCOLS;
 var DEFAULT_OVERVIEW_MODAL = {};
 var DEFAULT_RULES_MODAL = {};
-var PROXY_PROTOCOLS = ['socks', 'http-proxy'];
+var IPV6_RE = /^host:\/\/[:\da-f]*:[\da-f]*:[\da-f]+$/i;
+var PROXY_PROTOCOLS = ['socks', 'http-proxy', 'https-proxy'];
+
+function getRuleStr(rule) {
+  if (!rule) {
+    return;
+  }
+  var matcher = rule.matcher;
+  if (rule.port) {
+    if (IPV6_RE.test(matcher)) {
+      matcher = '[' + matcher + ']';
+    }
+    matcher = matcher + ':' + rule.port;
+  }
+  return rule.rawPattern + ' ' +  matcher;
+}
 
 OVERVIEW.forEach(function(name) {
   DEFAULT_OVERVIEW_MODAL[name] = '';
@@ -61,6 +76,7 @@ var Overview = React.createClass({
     var rulesModal = DEFAULT_RULES_MODAL;
     var modal = this.props.modal;
     var showOnlyMatchRules = this.state.showOnlyMatchRules;
+    var realUrl;
 
     if (modal) {
       overviewModal = {};
@@ -74,8 +90,15 @@ var Overview = React.createClass({
           if (value) {
             if ((prop == 'req.size' || prop == 'res.size') && value >= 1024) {
               value += '(' + Number(value / 1024).toFixed(2) + 'k)';
-            } else if (prop == 'realUrl' && value == modal.url) {
-              value = '';
+            } else if (prop == 'realUrl') {
+              if (value == modal.url) {
+                value = '';
+              } else if (modal.isHttps) {
+                value = 'tunnel://' + value;
+              }
+              realUrl = value;
+            } else if (modal.isHttps && prop === 'url') {
+              value = 'tunnel://' + value;
             }
           } else if (prop == 'res.statusMessage') {
             value = util.getStatusMessage(modal.res);
@@ -125,6 +148,8 @@ var Overview = React.createClass({
             key = 'rulesFile';
           } else if (name === 'reqMerge') {
             key = 'params';
+          } else if (name === 'pathReplace') {
+            key = 'urlReplace';
           }
           var rule = rules[key];
           if (rule && rule.list) {
@@ -135,8 +160,13 @@ var Overview = React.createClass({
               return rule.raw;
             }).join('\n');
           } else {
-            rulesModal[name] = rule ? rule.rawPattern + ' ' + rule.matcher + (rule.port ? ':' + rule.port : '') : undefined;
-            titleModal[name] = rule ? rule.raw : undefined;
+            rulesModal[name] = getRuleStr(rule);
+            if (rule) {
+              titleModal[name] = realUrl && (name === 'proxy' || name === 'host') ? 'Raw Rule: '
+                + rule.raw + '\nReal Url: ' + realUrl : rule.raw;
+            } else {
+              titleModal[name] = rule ? rule.raw : undefined;
+            }
           }
         });
       }

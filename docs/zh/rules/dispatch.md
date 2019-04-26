@@ -1,44 +1,31 @@
 # dispatch
+为尽可能缩减协议，减少复杂度，该协议已在最新版本的 whistle (`>=v1.12.3`) 中删除，请及时[更新whistle](../update.html)，并用[reqScript](./reqScript.html)或[resScript](./resScript.html)代替：
+```
+pattern reqScript://{test.js}
+pattern resScript://{test.js}
+```
 
-有时需要根据UA或其它请求头信息返回不同的数据，whistle用sandbox执行`dispatch`传人进来的脚本，`dispatch`关联的脚本在全局属性可以获取以下信息：
+#### 过滤规则
+需要确保whistle是最新版本：[更新whistle](../update.html)
 
-	url: //请求url
-	method: //请求方法
-	httpVersion: //请求http版本
-	ip: //请求客户端的ip
-	headers: //请求的头部
-	params: //请求参数，可以动态修改
+如果要过滤指定请求或指定协议的规则匹配，可以用如下协议：
 
-并通过`params`这个请求参数对象修改或添加请求参数，改变url达到匹配不同规则的效果：
-
-	var ua = headers['user-agent'];
-	if (/iphone/i.test(ua)) {
-	    params.test=1;
-	} else if (/android/i.test(ua)) {
-	    params.test=2;
-	} else {
-	    params.test=3;
-	}
-
-配置方式：
-
-	pattern dispatch://filepath
-
-filepath为[Values](http://local.whistlejs.com/#values)里面的{key}或者本地js文件(如：`e:\test\xxx`、`e:/test/xxx`、`/User/username/test/xxx`等)，pattern参见[匹配模式](../pattern.html)，更多模式请参考[配置方式](../mode.html)。
+1. [ignore](./ignore.html)：忽略指定规则
+2. [filter](./filter.html)：过滤指定pattern，支持根据请求方法、请求头、请求客户端IP过滤
 
 例子：
 
-	www.ifeng.com dispatch://{dispatch.js}
+```
+# 下面表示匹配pattern的同时不能为post请求且请求头里面的cookie字段必须包含test(忽略大小写)、url里面必须包含 cgi-bin 的请求
+# 即：过滤掉匹配filter里面的请求
+pattern operator1 operator2 excludeFilter://m:post includeFilter://h:cookie=test includeFilter:///cgi-bin/i
 
-dispatch.js:
+# 下面表示匹配pattern1、pattern2的请求方法为post、或请求头里面的cookie字段不能包含类似 `uin=123123` 且url里面必须包含 cgi-bin 的请求
+operator pattern1 pattern2 includeFilter://m:post excludeFilter://h:cookie=/uin=o\d+/i excludeFilter:///cgi-bin/i
 
-	var ua = headers['user-agent'];
-	if (/iphone/i.test(ua)) {
-	    params.test=1;
-	} else if (/android/i.test(ua)) {
-	    params.test=2;
-	} else {
-	    params.test=3;
-	}
+# 下面表示匹配pattern的请求忽略除了host以外的所有规则
+pattern ignore://*|!host
 
-[www.ifeng.com](http://www.ifeng.com/)的请求都会在url加上请求参数`test=xxx`
+# 下面表示匹配pattern的请求忽略file和host协议的规则
+pattern ignore://file|host
+```

@@ -85,15 +85,17 @@ program
   .option('-c, --dnsCache [time]', 'set the cache time of DNS (30000ms by default)', String, undefined)
   .option('-H, --host [host]', 'set the listening host (INADDR_ANY by default)', String, undefined)
   .option('-p, --port [port]', 'set the listening port (' + config.port + ' by default)', parseInt, undefined)
-  .option('-P, --uiport [uiport]', 'set the listening port of whistle (' + (config.port + 1) + ' by default)', parseInt, undefined)
+  .option('-P, --uiport [uiport]', 'set the listening port of whistle webui', parseInt, undefined)
   .option('-m, --middlewares [script path or module name]', 'set the express middlewares loaded at startup (as: xx,yy/zz.js)', String, undefined)
   .option('-M, --mode [mode]', 'set the way of starting the whistle mode (as: pureProxy|debug|multiEnv)', String, undefined)
-  .option('-u, --uipath [script path]', 'set the path of custom web ui', String, undefined)
   .option('-t, --timeout [ms]', 'set the request timeout (' + config.timeout + 'ms by default)', parseInt, undefined)
   .option('-e, --extra [extraData]', 'set the extra parameters for plugin', String, undefined)
   .option('-f, --secureFilter [secureFilter]', 'set the path of secure filter', String, undefined)
   .option('-R, --reqCacheSize [reqCacheSize]', 'set the cache size of request data (600 by default)', String, undefined)
-  .option('-F, --frameCacheSize [frameCacheSize]', 'set the cache size of webSocket and socket\'s frames (512 by default)', String, undefined);
+  .option('-F, --frameCacheSize [frameCacheSize]', 'set the cache size of webSocket and socket\'s frames (512 by default)', String, undefined)
+  .option('-A, --addon [pluginPaths]', 'add custom plugin paths', String, undefined)
+  .option('--no-global-plugins', 'do not load any globally installed plugins')
+  .option('--no-prev-options', 'do not reuse the previous options when restarting');
 
 var argv = process.argv;
 var cmd = argv[2];

@@ -5,7 +5,9 @@ var TextView = require('./textview');
 var CopyBtn = require('./copy-btn');
 var util = require('./util');
 var dataCenter = require('./data-center');
-var MAX_LENGTH =1024 * 12;
+var message = require('./message');
+
+var MAX_LENGTH = 1024 * 6;
 
 var Tips = React.createClass({
   render: function() {
@@ -68,8 +70,11 @@ var Textarea = React.createClass({
     var target = ReactDOM.findDOMNode(this.refs.nameInput);
     var name = target.value.trim();
     target.value = '';
+    var base64 = this.props.base64;
     ReactDOM.findDOMNode(this.refs.filename).value = name;
-    ReactDOM.findDOMNode(this.refs.content).value = this.props.value || '';
+    ReactDOM.findDOMNode(this.refs.type).value = base64 ? 'base64' : '';
+    ReactDOM.findDOMNode(this.refs.headers).value = this.props.headers || '';
+    ReactDOM.findDOMNode(this.refs.content).value = base64 != null ? base64 : (this.props.value || '');
     ReactDOM.findDOMNode(this.refs.downloadForm).submit();
     this.hideNameInput();
   },
@@ -88,12 +93,12 @@ var Textarea = React.createClass({
       return;
     }
     if (!name) {
-      alert('Value name can not be empty.');
+      message.error('Value name cannot be empty.');
       return;
     }
 
     if (/\s/.test(name)) {
-      alert('Name can not have spaces.');
+      message.error('Name cannot have spaces.');
       return;
     }
 
@@ -126,21 +131,22 @@ var Textarea = React.createClass({
   render: function() {
     var value = this.props.value || '';
     var exceed = value.length - MAX_LENGTH;
-    var showAddToValuesBtn = /[^\s]/.test(value);
+    var showAddToValuesBtn = /\S/.test(value);
     if (exceed > 512) {
       showAddToValuesBtn = false;
       value = value.substring(0, MAX_LENGTH) + '...\r\n\r\n(' + exceed + ' characters left, you can click on the ViewAll button in the upper right corner to view all)\r\n';
     }
-
+    var isHexView = this.props.isHexView;
     this.state.value = value;
     return (
         <div className={'fill orient-vertical-box w-textarea' + (this.props.hide ? ' hide' : '')}>
           <Tips data={this.props.tips} />
           <div className={'w-textarea-bar' + (value ? '' : ' hide')}>
-            <CopyBtn value={this.props.value} />
+            <CopyBtn name={isHexView ? 'All' : ''} value={this.props.value} />
+            {isHexView ? <CopyBtn name={isHexView ? 'Hex' : ''} value={util.getHexText(this.props.value)} /> : undefined}
             <a className="w-download" onDoubleClick={this.download}
               onClick={this.showNameInput} href="javascript:;" draggable="false">Download</a>
-            {showAddToValuesBtn ? <a className="w-add" onClick={this.showNameInput} href="javascript:;" draggable="false">AddToValues</a> : ''}
+            {showAddToValuesBtn ? <a className="w-add" onClick={this.showNameInput} href="javascript:;" draggable="false">+Value</a> : ''}
             <a className="w-edit" onClick={this.edit} href="javascript:;" draggable="false">ViewAll</a>
             <div onMouseDown={this.preventBlur}
               style={{display: this.state.showNameInput ? 'block' : 'none'}}
@@ -156,6 +162,8 @@ var Textarea = React.createClass({
           <form ref="downloadForm" action="cgi-bin/download" style={{display: 'none'}}
             method="post" target="downloadTargetFrame">
             <input ref="filename" name="filename" type="hidden" />
+            <input ref="type" name="type" type="hidden" />
+            <input ref="headers" name="headers" type="hidden" />
             <input ref="content" name="content" type="hidden" />
           </form>
         </div>

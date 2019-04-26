@@ -1,6 +1,6 @@
-var util = require('../lib/util');
-var config = require('../lib/config');
-var properties = require('../lib/properties');
+var util = require('../../../lib/util');
+var config = require('../../../lib/config');
+var properties = require('../../../lib/rules/util').properties;
 
 var MAX_OBJECT_SIZE = 1024 * 1024 * 6;
 var index = 0;
@@ -16,6 +16,7 @@ exports.getServerInfo = function getServerInfo(req) {
   var info = {
     version: config.version,
     networkMode: config.networkMode,
+    strictMode: config.strict,
     multiEnv: config.multiEnv,
     baseDir: config.baseDirHash,
     username: config.username,
@@ -24,7 +25,6 @@ exports.getServerInfo = function getServerInfo(req) {
     host: util.hostname(),
     isWin: util.isWin,
     port: config.port,
-    weinrePort: config.weinreport,
     ipv4: [],
     ipv6: [],
     mac: req.ip + (config.storage ? '\n' + config.storage : '')

@@ -25,6 +25,8 @@ var $ = require('jquery');
 var React = require('react');
 var ReactDOM = require('react-dom');
 var CodeMirror = require('codemirror');
+var message = require('./message');
+var INIT_LENGTH = 1024 * 16;
 
 require('codemirror/mode/javascript/javascript');
 require('codemirror/mode/css/css');
@@ -47,7 +49,7 @@ var DEFAULT_THEME = 'cobalt';
 var DEFAULT_FONT_SIZE = '16px';
 var RULES_COMMENT_RE = /^()\s*#\s*/;
 var JS_COMMENT_RE = /^(\s*)\/\/+\s?/;
-var NO_SPACE_RE = /[^\s]/;
+var NO_SPACE_RE = /\S/;
 
 var Editor = React.createClass({
   getThemes: function() {
@@ -104,7 +106,7 @@ var Editor = React.createClass({
       this._editor.setOption('readOnly', readOnly);
     }
   },
-  setAutoComplete: function(enable) {
+  setAutoComplete: function() {
     var option = this.isRulesEditor() ? rulesHint.getExtraKeys() : {};
     if (!/\(Macintosh;/i.test(window.navigator.userAgent)) {
       option['Ctrl-F'] = 'findPersistent';
@@ -125,7 +127,16 @@ var Editor = React.createClass({
         self.props.onChange.call(self, e);
       }
     });
-    self._init();
+    editor.on('mousedown', function(_, e) {
+      if (!(e.ctrlKey || e.metaKey)) {
+        return;
+      }
+      var target = $(e.target);
+      if (target.hasClass('cm-js-type') || target.hasClass('cm-js-at') || target.hasClass('cm-js-http-url')) {
+        e.preventDefault();
+      }
+    });
+    self._init(true);
     $(elem).find('.CodeMirror').addClass('fill');
     resize();
     $(window).on('resize', function() {
@@ -250,15 +261,26 @@ var Editor = React.createClass({
       }
     });
   },
-  _init: function() {
-    this.setMode(this.props.mode);
-    this.setValue(this.props.value);
-    this.setTheme(this.props.theme);
-    this.setFontSize(this.props.fontSize);
-    this.setTheme(this.props.theme);
-    this.showLineNumber(this.props.lineNumbers || false);
-    this.setReadOnly(this.props.readOnly || false);
-    this.setAutoComplete();
+  _init: function(init) {
+    var self = this;
+    this.setMode(self.props.mode);
+    var value = self.props.value;
+    if (init && value && value.length > INIT_LENGTH) {
+      var elem = message.info('Loading...');
+      self.timer = setTimeout(function() {
+        elem.hide();
+        self.timer = null;
+        self.setValue(self.props.value); // 节流
+      }, 500);
+    } else if (!self.timer) {
+      self.setValue(value);
+    }
+    self.setTheme(self.props.theme);
+    self.setFontSize(self.props.fontSize);
+    self.setTheme(self.props.theme);
+    self.showLineNumber(self.props.lineNumbers || false);
+    self.setReadOnly(self.props.readOnly || false);
+    self.setAutoComplete();
   },
   componentDidUpdate: function() {
     this._init();

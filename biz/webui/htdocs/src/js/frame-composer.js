@@ -3,7 +3,8 @@ var ReactDOM = require('react-dom');
 var dataCenter = require('./data-center');
 var util = require('./util');
 var events = require('./events');
-var fromByteArray  = require('base64-js').fromByteArray ;
+var message = require('./message');
+var storage = require('./storage');
 
 var MAX_FILE_SIZE = 1024 * 1025;
 var MAX_LENGTH = 1024 * 64;
@@ -11,7 +12,9 @@ var JSON_RE = /^\s*(?:[\{｛][\w\W]+[\}｝]|\[[\w\W]+\])\s*$/;
 
 var FrameComposer = React.createClass({
   getInitialState: function() {
-    return {};
+    return {
+      isHexText: !!storage.get('showHexTextFrame')
+    };
   },
   componentDidMount: function() {
     var self = this;
@@ -19,7 +22,13 @@ var FrameComposer = React.createClass({
     self.dataForm = ReactDOM.findDOMNode(self.refs.uploadDataForm);
     events.on('composeFrame', function(e, frame) {
       if (frame) {
-        self.setTextarea(util.getBody(frame, true));
+        var body;
+        if (self.state.isHexText) {
+          body = util.getHexText(util.getHex(frame));
+        } else {
+          body = util.getBody(frame, true);
+        }
+        self.setTextarea(body);
       }
     });
     events.on('replayFrame', function(e, frame) {
@@ -34,6 +43,8 @@ var FrameComposer = React.createClass({
         events.trigger('autoRefreshFrames');
       });
     });
+    var text = storage.get('composeFrameData');
+    this.setTextarea(String(text || ''));
   },
   shouldComponentUpdate: function(nextProps) {
     var hide = util.getBoolean(this.props.hide);
@@ -66,20 +77,18 @@ var FrameComposer = React.createClass({
   uploadForm: function(form) {
     var file = form.get('uploadData');
     if (file.size > MAX_FILE_SIZE) {
-      return alert('The file size can not exceed 1m.');
+      return alert('The file size cannot exceed 1m.');
     }
-    var reader = new FileReader();
-    reader.readAsArrayBuffer(file);
     var self = this;
     var params = {
       target: self.target,
       type: self.dataType
     };
-    reader.onload = function () {
-      params.base64 = fromByteArray(new window.Uint8Array(reader.result));
+    util.readFileAsBase64(file, function(base64) {
+      params.base64 = base64;
       self.send(params);
       self.dataField.value = '';
-    };
+    });
   },
   send: function(params, cb) {
     var data = this.props.data;
@@ -91,6 +100,9 @@ var FrameComposer = React.createClass({
       if (!data) {
         return util.showSystemError(xhr);
       }
+      if (data.ec !== 0) {
+        return message.error('Server busy, try again later.');
+      }
       cb && cb();
     });
   },
@@ -101,10 +113,20 @@ var FrameComposer = React.createClass({
     }
     var self = this;
     var target = e.target;
+    var base64;
+    if (this.state.isHexText) {
+      base64 = util.getBase64FromHexText(value);
+      if (base64 === false) {
+        alert('The hex text cannot be converted to binary data.\nPlease check the hex text or switch to plain text.');
+        return;
+      }
+      value = undefined;
+    }
     var params = {
       type: target.nodeName === 'A' ? 'bin' : 'text',
       target: target.getAttribute('data-target') ? 'server' : 'client',
-      text: value.replace(/\r\n|\r|\n/g, '\r\n')
+      text: value,
+      base64: base64
     };
     self.send(params, function() {
       self.setTextarea('');
@@ -124,6 +146,10 @@ var FrameComposer = React.createClass({
       text: text,
       isJSON: JSON_RE.test(text)
     });
+    clearTimeout(this.timer);
+    this.timer = setTimeout(function() {
+      storage.set('composeFrameData', text);
+    }, 600);
   },
   onTextareaChange: function(e) {
     this.setTextarea(e.target.value);
@@ -131,10 +157,21 @@ var FrameComposer = React.createClass({
   preventDefault: function(e) {
     e.preventDefault();
   },
+  onTypeChange: function(e) {
+    var isHexText = e.target.checked;
+    storage.set('showHexTextFrame', isHexText ? 1 : '');
+    this.setState({ isHexText: isHexText });
+    if (isHexText && util.getBase64FromHexText(this.state.text, true) === false) {
+      message.error('The hex text cannot be converted to binary data.');
+    }
+  },
   render: function() {
     var data = this.props.data || '';
-    var isJSON = this.state.isJSON;
-    var text = this.state.text;
+    util.socketIsClosed(data);
+    var state = this.state;
+    var isJSON = state.isJSON;
+    var text = state.text || '';
+    var isHexText = state.isHexText;
     var closed = data.closed;
     var isHttps = data.isHttps;
     var leftStyle = isHttps ? {left: 0} : undefined;
@@ -143,21 +180,16 @@ var FrameComposer = React.createClass({
     return (
       <div onDrop={this.onDrop} className={'fill orient-vertical-box w-frames-composer' + (this.props.hide ? ' hide' : '')}>
         <div className="w-frames-composer-action">
-          <div className="btn-group">
-            <button disabled={closed} title={tips} onMouseDown={this.preventDefault} data-target="server"
-              onClick={this.onSend} type="button" className="btn btn-primary btn-sm">Send to server</button>
-            <button disabled={closed} title={tips} type="button" className="btn btn-primary dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-              <span className="caret"></span>
-            </button>
-            <ul style={leftStyle} className={'dropdown-menu' + (closed ? ' hide' : '')}>
-              <li style={displayStyle}><a data-target="server" onClick={this.onSend} href="javascript:;">Send binary data</a></li>
-              <li><a onClick={this.uploadTextToServer} href="javascript:;">{isHttps ? 'Upload to server' : 'Upload text data'}</a></li>
-              <li style={displayStyle}><a onClick={this.uploadBinToServer} href="javascript:;">Upload binary data</a></li>
-            </ul>
-          </div>
+          <label className={'w-frames-hex-data' + (isHexText ? ' w-frames-checked' : '')}>
+            <input checked={isHexText} onChange={this.onTypeChange} type="checkbox" />
+            HexText
+          </label>
           <div className="btn-group">
             <button disabled={closed} title={tips} onMouseDown={this.preventDefault} onClick={this.onSend}
-              type="button" className="btn btn-default btn-sm">Send to client</button>
+              type="button" className="btn btn-default btn-sm">
+              <span className="glyphicon glyphicon-arrow-left"></span>
+              Send to client
+            </button>
             <button disabled={closed} title={tips} type="button" className="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
               <span className="caret"></span>
             </button>
@@ -167,10 +199,26 @@ var FrameComposer = React.createClass({
               <li style={displayStyle}><a onClick={this.uploadBinToClient} href="javascript:;">Upload binary data</a></li>
             </ul>
           </div>
+          <div className="btn-group">
+            <button disabled={closed} title={tips} onMouseDown={this.preventDefault} data-target="server"
+              onClick={this.onSend} type="button" className="btn btn-default btn-sm">
+              <span className="glyphicon glyphicon-arrow-right"></span>
+              Send to server
+            </button>
+            <button disabled={closed} title={tips} type="button" className="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+              <span className="caret"></span>
+            </button>
+            <ul style={leftStyle} className={'dropdown-menu' + (closed ? ' hide' : '')}>
+              <li style={displayStyle}><a data-target="server" onClick={this.onSend} href="javascript:;">Send binary data</a></li>
+              <li><a onClick={this.uploadTextToServer} href="javascript:;">{isHttps ? 'Upload to server' : 'Upload text data'}</a></li>
+              <li style={displayStyle}><a onClick={this.uploadBinToServer} href="javascript:;">Upload binary data</a></li>
+            </ul>
+          </div>
           <button disabled={!isJSON} type="button" title="Format JSON" onClick={this.format}
             className="btn btn-default w-format-json-btn">Format</button>
         </div>
-        <textarea maxLength={MAX_LENGTH} value={text} onChange={this.onTextareaChange} placeholder={'Input the text'} className="fill" />
+        <textarea style={{ fontFamily: isHexText ? 'monospace' : undefined }} maxLength={MAX_LENGTH}
+          value={text} onChange={this.onTextareaChange} placeholder={'Input the ' + (isHexText ? 'hex ' : '') + 'text'} className="fill" />
         <form ref="uploadDataForm" method="post" encType="multipart/form-data" style={{display: 'none'}}> 
           <input ref="uploadData" onChange={this.onFormChange} type="file" name="uploadData" />
         </form>

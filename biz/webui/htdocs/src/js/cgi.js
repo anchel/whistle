@@ -33,17 +33,17 @@ function createCgi(url, settings) {
       }
     }
 
-    var execCallback = function(data, xhr) {
+    var execCallback = function(data, xhr, em) {
       jqXhr = null;
-      callback && callback.call(this, data, xhr);
+      callback && callback.call(this, data, xhr, em);
       var args = queue.shift();
       args && cgiFn.apply(self, args);
     };
     options.success = function(data, statusText, xhr) {
       execCallback.call(this, data, xhr);
     };
-    options.error = function(xhr) {
-      execCallback.call(this, false, xhr);
+    options.error = function(xhr, em) {
+      execCallback.call(this, false, xhr, em);
     };
 
     return (jqXhr = $.ajax(options));

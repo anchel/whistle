@@ -1,10 +1,12 @@
 var getRules = require('./rules');
 var getValues = require('./values');
 var util = require('./util');
-var config = require('../lib/config');
-var properties = require('../lib/properties');
+var config = require('../../../lib/config');
+var rulesUtil = require('../../../lib/rules/util');
+var properties = rulesUtil.properties;
 var proxy = require('../lib/proxy');
 
+var getUploadFiles = rulesUtil.values.getUploadFiles;
 var logger = proxy.logger;
 var pluginMgr = proxy.pluginMgr;
 
@@ -25,9 +27,10 @@ module.exports = function(req, res) {
     mvaluesTime: config.mvaluesTime,
     latestVersion: properties.get('latestVersion'),
     server: util.getServerInfo(req),
+    uploadFiles: getUploadFiles(),
     rules: getRules(),
     values: getValues(),
-    interceptHttpsConnects: properties.get('interceptHttpsConnects'),
+    interceptHttpsConnects: !config.multiEnv && properties.get('interceptHttpsConnects'),
     plugins: pluginMgr.getPlugins(),
     disabledAllRules: properties.get('disabledAllRules'),
     disabledPlugins: properties.get('disabledPlugins') || {},

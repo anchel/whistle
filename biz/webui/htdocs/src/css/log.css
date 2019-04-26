@@ -1,4 +1,4 @@
-.w-detail-log {position: relative; min-width: 550px;}
+.w-detail-log {position: relative; min-width: 560px;}
 .w-detail-log ul, .w-detail-log li {list-style: none; padding: 0; margin: 0; display: block; width: 100%; font-size: 12px;}
 .w-detail-log li {width: 100%; padding: 1px 0; position: relative;}
 .w-detail-log pre {background: none; border: none; padding: 10px; margin: 0; font-size: 12px}
@@ -59,4 +59,39 @@
 }
 .w-log-action-bar .w-textarea-bar a:hover {
   color: #337ab7;
+}
+.w-log-action-bar > .w-dropdown {
+  margin-right: 20px;
+  width: 65px;
+}
+.w-textarea-bar .w-disabled {
+  cursor: not-allowed;
+  color: #888!important;
+}
+.w-textarea-bar .w-refresh-menu-list {
+  display: inline-block;
+}
+
+.w-detail-log .w-textarea-bar .w-menu-item {
+  top: 21px;
+  right: 0;
+}
+
+.w-detail-log .w-textarea-bar a {
+  padding-bottom: 2px;
+}
+
+.w-log-expand-root {
+  font-weight: normal;
+  font-size: 12px;
+  line-height: 20px;
+  display: inline-block;
+  height: 20px;
+  vertical-align: top;
+  margin-left: 15px;
+}
+
+.w-log-expand-root input {
+  margin-right: 5px;
+  vertical-align: sub;
 }

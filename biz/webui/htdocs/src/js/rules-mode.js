@@ -12,7 +12,8 @@ events.on('updatePlugins', function() {
 
 CodeMirror.defineMode('rules', function() {
   function isIP(str) {
-    return /^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\:\d+)?$/.test(str);
+    return /^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\:\d+)?$/.test(str)
+      || /^[:\da-f]*:[\da-f]*:[\da-f]+$/i.test(str) || /^\[[:\da-f]*:[\da-f]*:[\da-f]+\](?::\d+)?$/i.test(str);
   }
   function isHost(str) {
     return /^x?hosts?:\/\//.test(str);
@@ -26,11 +27,11 @@ CodeMirror.defineMode('rules', function() {
   }
 
   function isReq(str) {
-    return /^(?:req|hostname|reqHost|accept|etag|referer|auth|ua|forwardedFor|reqCookies|reqDelay|reqSpeed|reqCors|reqHeaders|method|reqType|reqCharset|reqBody|reqPrepend|reqAppend|reqReplace|reqWrite|reqWriteRaw):\/\//.test(str);
+    return /^(?:referer|auth|ua|forwardedFor|reqCookies|reqDelay|reqSpeed|reqCors|reqHeaders|method|reqType|reqCharset|reqBody|reqPrepend|reqAppend|reqReplace|reqWrite|reqWriteRaw):\/\//.test(str);
   }
 
   function isRes(str) {
-    return /^(?:resScript|responseFor|res|resCookies|resHeaders|statusCode|status|replaceStatus|redirect|resDelay|resSpeed|resCors|resType|resCharset|cache|attachment|download|location|resBody|resPrepend|resAppend|css(?:Append|Prepend|Body)?|html(?:Append|Prepend|Body)?|js(?:Append|Prepend|Body)?|resReplace|resMerge|resWrite|resWriteRaw):\/\//.test(str);
+    return /^(?:resScript|responseFor|resCookies|resHeaders|statusCode|status|replaceStatus|redirect|resDelay|resSpeed|resCors|resType|resCharset|cache|attachment|download|resBody|resPrepend|resAppend|css(?:Append|Prepend|Body)?|html(?:Append|Prepend|Body)?|js(?:Append|Prepend|Body)?|resReplace|resMerge|resWrite|resWriteRaw):\/\//.test(str);
   }
 
   function isUrl(str) {
@@ -56,7 +57,7 @@ CodeMirror.defineMode('rules', function() {
   }
 
   function isParams(str) {
-    return /^(?:urlParams|params|reqMerge|urlReplace):\/\//.test(str);
+    return /^(?:urlParams|params|reqMerge|urlReplace|pathReplace):\/\//.test(str);
   }
 
   function isLog(str) {
@@ -64,11 +65,11 @@ CodeMirror.defineMode('rules', function() {
   }
 
   function isFilter(str) {
-    return /^filter:\/\//.test(str);
+    return /^(?:excludeFilter|filter):\/\//.test(str);
   }
 
   function isPlugin(str) {
-    return (/^plugin:\/\//.test(str) || /^(?:plugin|whistle)\.[a-z\d_\-]+:\/\//.test(str)) && !notExistPlugin(str);
+    return /^(?:plugin|whistle)\.[a-z\d_\-]+:\/\//.test(str) && !notExistPlugin(str);
   }
 
   function isRulesFile(str) {
@@ -84,19 +85,15 @@ CodeMirror.defineMode('rules', function() {
   }
 
   function isEnable(str) {
-    return /^enable:\/\//.test(str);
+    return /^(?:includeFilter|enable):\/\//.test(str);
   }
 
   function isDelete(str) {
     return /^delete:\/\//.test(str);
   }
 
-  function isDispatch(str) {
-    return /^dispatch:\/\//.test(str);
-  }
-
   function isProxy(str) {
-    return /^x?(?:proxy|http-proxy|http2https-proxy|https2http-proxy|internal-proxy):\/\//.test(str);
+    return /^x?(?:proxy|https?-proxy|http2https-proxy|https2http-proxy|internal-proxy):\/\//.test(str);
   }
 
   function isSocks(str) {
@@ -148,10 +145,14 @@ CodeMirror.defineMode('rules', function() {
         if (/\s/.test(ch) || ch == '#') {
           return false;
         }
+        if (str === 'line' && ch === '`') {
+          type = 'keyword js-keyword';
+          return false;
+        }
         str += ch;
         if (!type && ch == '/' && pre == '/') {
           if (isHost(str)) {
-            type = 'number js-number';
+            type = 'number js-number js-type';
           } else if (isHead(str)) {
             type = 'header js-head js-type';
           } else if (isWeinre(str)) {
@@ -178,8 +179,6 @@ CodeMirror.defineMode('rules', function() {
             type = 'negative js-disable js-type';
           } else if (isDelete(str)) {
             type = 'negative js-delete js-type';
-          } else if (isDispatch(str)) {
-            type = 'variable-2 js-dispatch js-type';
           } else if (isProxy(str)) {
             type = 'variable-2 js-proxy js-type';
           } else if (isSocks(str)) {
@@ -189,7 +188,7 @@ CodeMirror.defineMode('rules', function() {
           } else if (isRulesFile(str)) {
             type = 'variable-2 js-rulesFile js-type';
           } else if (isUrl(str)) {
-            type = 'string-2 js-url js-type';
+            type = 'string-2 js-url js-type' + (str[0] === 'h' ? ' js-http-url' : '');
           } else if (isWildcard(str)) {
             type = 'attribute js-attribute';
           } else if (isRule(str)) {
@@ -215,7 +214,7 @@ CodeMirror.defineMode('rules', function() {
           type = 'builtin js-rule js-type';
         }
       }
-      return not ? type + ' error-rule' : type;
+      return not ? type + ' error-rule' : (type || 'js-http-url');
     }
   };
 });

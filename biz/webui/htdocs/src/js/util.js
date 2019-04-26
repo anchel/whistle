@@ -1,5 +1,6 @@
 var $ = require('jquery');
 var toByteArray = require('base64-js').toByteArray;
+var fromByteArray  = require('base64-js').fromByteArray;
 var jsBase64 = require('js-base64').Base64;
 var base64Decode = jsBase64.decode;
 var base64Encode = jsBase64.encode;
@@ -8,13 +9,54 @@ var evalJson = require('./components/json/eval');
 var isUtf8 = require('./is-utf8');
 var message = require('./message');
 
+var CRLF_RE = /\r\n|\r|\n/g;
 var BIG_NUM_RE = /[:\[][\s\n\r]*-?[\d.]{16,}[\s\n\r]*[,\}\]]/;
 var dragCallbacks = {};
 var dragTarget, dragOffset, dragCallback;
+var logTempId = 0;
+var LEVELS = ['fatal', 'error', 'warn', 'info', 'debug'];
 
-function noop() {}
+function noop(_) {
+  return _;
+}
 
 exports.noop = noop;
+
+function notEStr(str) {
+  return str && typeof str === 'string';
+}
+
+exports.parseLogs = function(str) {
+  try {
+    str = JSON.parse(str);
+  } catch(e) {}
+  if (!Array.isArray(str)) {
+    return;
+  }
+  var result;
+  var count = 0;
+  for (var i = 0, len = str.length; i < len; i++) {
+    var item = str[i];
+    if (item && item.text !== undefined) {
+      result = result || [];
+      item.id = ++logTempId;
+      item.date = item.date > 0 ? item.date : 0;
+      if (notEStr(item.level)) {
+        item.level = item.level.toLowerCase();
+        if (LEVELS.indexOf(item.level) === -1) {
+          item.level = 'info';
+        }
+      } else {
+        item.level = 'info';
+      }
+      result.push(item);
+      if (++count >= 100) {
+        return result;
+      }
+    }
+  }
+  return result;
+};
 
 exports.preventDefault = function preventDefault(e) {
   e.keyCode == 8 && e.preventDefault();
@@ -22,6 +64,30 @@ exports.preventDefault = function preventDefault(e) {
 
 exports.preventBlur = function preventDefault(e) {
   e.preventDefault();
+};
+
+exports.getBase64FromHexText = function (str, check) {
+  if (!str) {
+    return '';
+  }
+  if (/[^\da-f\s]/i.test(str)) {
+    return false;
+  }
+  str = str.replace(/\s+/g, '');
+  var len = str.length;
+  if (len % 2 === 1) {
+    return false;
+  }
+  if (check) {
+    return true;
+  }
+  str = str.match(/../g).map(function(char) {
+    return parseInt(char, 16);
+  });
+  try {
+    return fromByteArray(str);
+  } catch (e) {}
+  return false;
 };
 
 $(document).on('mousedown', function(e) {
@@ -177,8 +243,25 @@ function getRawType(type) {
   if (type && typeof type != 'string') {
     type = type['content-type'] || type.contentType;
   }
-  return typeof type === 'string' ? type.split(';')[0].toLowerCase() : '';
+  return typeof type === 'string' ? type.split(';')[0].trim().toLowerCase() : '';
 }
+
+exports.getExtension = function(headers) {
+  var suffix = getContentType(headers);
+  var type;
+  if (suffix === 'XML') {
+    type = getRawType(headers);
+    if (type.indexOf('image/') === 0) {
+      suffix = 'IMG';
+    }
+  }
+  if (suffix !== 'IMG') {
+    return suffix ? '.' + (suffix === 'TEXT' ? 'txt' : suffix.toLowerCase()) : '';
+  }
+  type = type || getRawType(headers);
+  type = type.substring(type.indexOf('/') + 1).toLowerCase();
+  return /\w+/.test(type) ? '.' + RegExp['$&'] : ''; 
+};
 
 function getContentType(type) {
   type = getRawType(type);
@@ -319,14 +402,16 @@ exports.parseQueryString = function(str, delimiter, seperator, decode, donotAllo
   return result;
 };
 
-function objectToString(obj, rawNames) {
+function objectToString(obj, rawNames, noEncoding) {
   if (!obj) {
     return '';
   }
-  rawNames = rawNames || {};
-  return Object.keys(obj).map(function(key) {
+  var keys = Object.keys(obj);
+  var index = noEncoding ? keys.indexOf('content-encoding') : -1;
+  index !== -1 && keys.splice(index, 1);
+  return keys.map(function(key) {
     var value = obj[key];
-    key = rawNames[key] || key;
+    key = rawNames && rawNames[key] || key;
     if (!Array.isArray(value)) {
       return key + ': ' + value;
     }
@@ -338,9 +423,21 @@ function objectToString(obj, rawNames) {
 
 exports.objectToString = objectToString;
 
+function toLowerCase(str) {
+  return typeof str == 'string' ?  str.trim().toLowerCase() : str;
+}
+
+function getContentEncoding(headers) {
+  var encoding = toLowerCase(headers && headers['content-encoding'] || headers);
+  return encoding === 'gzip' || encoding === 'deflate' ? encoding : null;
+}
+
 exports.getOriginalReqHeaders = function(item) {
   var req = item.req;
-  var headers = $.extend({}, req.headers, item.rulesHeaders);
+  var headers = $.extend({}, req.headers, item.rulesHeaders, true);
+  if (getContentEncoding(headers)) {
+    delete headers['content-encoding'];
+  }
   return objectToString(headers, req.rawHeaderNames);
 };
 
@@ -518,7 +615,10 @@ exports.getStatusMessage = function(res) {
   if (!res.statusCode) {
     return '';
   }
-  return res.statusMessage || STATUS_CODES[res.statusCode] || 'unknown';
+  if (typeof res.statusMessage == 'string') {
+    return res.statusMessage;
+  }
+  return STATUS_CODES[res.statusCode] || 'unknown';
 };
 
 function isUrlEncoded(req) {
@@ -597,17 +697,40 @@ exports.getMenuPosition = function(e, menuWidth, menuHeight) {
   var left = e.pageX;
   var top = e.pageY;
   var docElem = document.documentElement;
-  if (left + menuWidth - window.scrollX >= docElem.clientWidth) {
+  var clientWidth = docElem.clientWidth;
+  if (left + menuWidth - window.scrollX >= clientWidth) {
     left = Math.max(left - menuWidth, window.scrollX + 1);
   }
   if (top + menuHeight - window.scrollY >= docElem.clientHeight) {
     top = Math.max(top - menuHeight, window.scrollY + 1);
   }
-  return { top: top, left: left };
+  return { top: top, left: left, marginRight: clientWidth - left };
 };
 
 exports.canReplay = function(item) {
   return !item.isHttps || item.req.headers['x-whistle-policy'] === 'tunnel' || /^wss?:/.test(item.url);
+};
+
+function socketIsClosed(reqData) {
+  if (!reqData.closed && reqData.frames) {
+    var lastItem = reqData.frames[reqData.frames.length - 1];
+    if (lastItem && (lastItem.closed || lastItem.err)) {
+      reqData.closed = true;
+    }
+  }
+  return reqData.closed;
+}
+
+exports.socketIsClosed = socketIsClosed;
+
+exports.canAbort = function(item) {
+  if (!item.lost && !item.endTime) {
+    return true;
+  }
+  if (item.reqError || item.resError) {
+    return false;
+  }
+  return !!item.frames && !socketIsClosed(item);
 };
 
 exports.asCURL = function(item) {
@@ -654,8 +777,8 @@ exports.getTimeFromHar = function(time) {
   return time > 0 ? time : 0;
 };
 
-exports.parseKeyword = function parseKeyword(keyword) {
-  keyword = keyword.trim().toLowerCase().split(/\s+/g);
+exports.parseKeyword = function(keyword) {
+  keyword = keyword.toLowerCase().split(/\s+/g);
   var result = {};
   var index = 0;
   for (var i = 0; i <= 3; i++) {
@@ -670,7 +793,7 @@ exports.parseKeyword = function parseKeyword(keyword) {
   return result;
 };
 
-exports.checkLogText = function(text, keyword) {
+function checkLogText(text, keyword) {
   if (!keyword.key1) {
     return '';
   }
@@ -685,7 +808,61 @@ exports.checkLogText = function(text, keyword) {
     return ' hide';
   }
   return '';
+}
+
+function showLog(item) {
+  item.hide = false;
+}
+
+exports.hasVisibleLog = function(list) {
+  var len = list.length;
+  if (!len) {
+    return false;
+  }
+  for (var i = 0; i < len; i++) {
+    if (!list[i].hide) {
+      return true;
+    }
+  }
 };
+exports.trimLogList = function(list, overflow, hasKeyword) {
+  var len = list.length;
+  if (hasKeyword) {
+    var i = 0;
+    while(overflow > 0 && i < len) {
+      if (list[i].hide) {
+        --len;
+        --overflow;
+        list.splice(i, 1);
+      } else {
+        ++i;
+      }
+    }
+    overflow = list.length - 100;
+  }
+  overflow > 0 && list.splice(0, overflow);
+  return list;
+};
+exports.filterLogList = function(list, keyword) {
+  if (!list) {
+    return;
+  }
+  if (!keyword) {
+    list.forEach(showLog);
+    return;
+  }
+  list.forEach(function(log) {
+    var level = keyword.level;
+    if (level && log.level !== level) {
+      log.hide = true;
+    } else {
+      var text = 'Date: ' + (new Date(log.date)).toLocaleString() + log.logId + '\r\n' + log.text;
+      log.hide = checkLogText(text, keyword);
+    }
+  });
+};
+
+exports.checkLogText = checkLogText;
 
 exports.scrollAtBottom = function(con, ctn) {
   return con.scrollTop + con.offsetHeight + 5 > ctn.offsetHeight;
@@ -726,15 +903,10 @@ function padLeftZero(n, len) {
 function getHexString(arr) {
   var len = arr.length;
   var offsetLen = Math.max(6, len.toString(16).length);
-  var str = 'Offset';
-  str = str + getPadding(offsetLen - str.length) + '  ';
-  var i, ch;
-  for (i = 0; i < 16; i++) {
-    str += ' ' + padLeftZero(i, 2);
-  }
-  var result = [str];
+  var str, ch;
+  var result = [];
   var rowsCount = Math.ceil(len / 16);
-  for (i = 0; i < rowsCount; i++) {
+  for (var i = 0; i < rowsCount; i++) {
     var j = i * 16;
     var rowLen = Math.min(16 + j, len);
     str = padLeftZero(Math.max(rowLen - 16, 0), offsetLen) + '  ';
@@ -750,6 +922,7 @@ function getHexString(arr) {
 }
 
 var COMP_RE = /%[a-f\d]{2}|./ig;
+var CHECK_COMP_RE = /%[a-f\d]{2}/i;
 var SPACE_RE = /\+/g;
 var gbkDecoder;
 if (window.TextDecoder) {
@@ -758,7 +931,7 @@ if (window.TextDecoder) {
   } catch(e) {}
 }
 
-function decodeURIComponentSafe(str) {
+function decodeURIComponentSafe(str, isUtf8) {
   if (!str || typeof str !== 'string') {
     return '';
   }
@@ -766,7 +939,7 @@ function decodeURIComponentSafe(str) {
   try {
     return decodeURIComponent(result);
   } catch(e) {}
-  if (gbkDecoder) {
+  if (!isUtf8 && gbkDecoder && CHECK_COMP_RE.test(result)) {
     try {
       var arr = [];
       result.replace(COMP_RE, function(code) {
@@ -776,13 +949,23 @@ function decodeURIComponentSafe(str) {
           arr.push(String.fromCharCode(code));
         }
       });
-      return gbkDecoder.decode(new window.Uint8Array(arr));
+      if (!isUtf8(arr)) {
+        return gbkDecoder.decode(new window.Uint8Array(arr));
+      }
     } catch(e) {}
   }
   return str;
 }
 
 exports.decodeURIComponentSafe = decodeURIComponentSafe;
+
+function safeEncodeURIComponent(str) {
+  try {
+    return encodeURIComponent(str);
+  } catch(e) {}
+  return str;
+}
+exports.encodeURIComponent = safeEncodeURIComponent;
 
 function base64toBytes(base64) {
   try {
@@ -828,6 +1011,17 @@ if (window.Symbol) {
   JSON_KEY = window.Symbol.for(JSON_KEY);
 }
 
+function getHexFromBase64(base64) {
+  if (base64) {
+    try {
+      return getHexString(base64toBytes(base64));
+    } catch (e) {}
+  }
+  return base64;
+}
+
+exports.getHexFromBase64 = getHexFromBase64;
+
 function initData(data, isReq) {
   if ((data[BODY_KEY] && data[HEX_KEY])) {
     return;
@@ -842,7 +1036,7 @@ function initData(data, isReq) {
         body = String(body);
         data.base64 = base64Encode(body);
         data[BODY_KEY] = body;
-        data[HEX_KEY] = getHexString(base64toBytes(data.base64));
+        data[HEX_KEY] = getHexFromBase64(data.base64);
       } catch(e) {} finally {
         delete data.body;
         delete data.bin;
@@ -856,7 +1050,7 @@ function initData(data, isReq) {
   var type = !isReq && getMediaType(data);
   if (type) {
     data[BODY_KEY] = 'data:' + type + ';base64,' + data.base64;
-    data[HEX_KEY] = getHexString(base64toBytes(data.base64));
+    data[HEX_KEY] = getHexFromBase64(data.base64);
   } else {
     var result = decodeBase64(data.base64);
     data[BODY_KEY] = result.text;
@@ -906,24 +1100,195 @@ exports.openPreview = function(data) {
   var type = getContentType(res.headers);
   var isImg = type === 'IMG';
   if (isImg || type === 'HTML') {
-    var url = data.url.replace(/^ws/, 'http');
+    var url = data.url;
+    if (/^((?:http|ws)s?:)?\/\//i.test(url)) {
+      if (RegExp.$1) {
+        url = url.replace(/^ws/, 'http');
+      } else {
+        url = 'http:' + url;
+      }
+    } else {
+      url = 'http://' + url;
+    }
     var charset = isImg ? 'UTF8' : getCharset(res);
     url += (url.indexOf('?') === -1 ? '' : '&') + '???WHISTLE_PREVIEW_CHARSET=' + charset;
     window.open(url + '???#' + (isImg ? getBody(res) : res.base64));
   }
 };
 
-exports.parseRawJson = function(str) {
+function parseRawJson(str, quite) {
   try {
     var json = JSON.parse(str);
     if (json && typeof json === 'object') {
       return json;
     }
-    message.error('Error: not a json object.');
+    !quite && message.error('Error: not a json object.');
   } catch (e) {
     if (json = evalJson(str)) {
       return json;
     }
-    message.error('Error: ' + e.message);
+    !quite && message.error('Error: ' + e.message);
   }
+}
+
+exports.parseRawJson = parseRawJson;
+
+function parseHeaders(str) {
+  var headers = {};
+  str = str.split(CRLF_RE);
+  str.forEach(function(line) {
+    var index = line.indexOf(':');
+    var value = '';
+    if (index != -1) {
+      value = line.substring(index + 1).trim();
+      var name = line.substring(0, index).trim();
+      var list = headers[name];
+      if (list) {
+        if (!Array.isArray(list)) {
+          headers[name] = list = [list];
+        }
+        list.push(value);
+      } else {
+        headers[name] = value;
+      }
+    }
+  });
+  return headers;
+}
+
+exports.parseHeaders = function(str) {
+  str = typeof str === 'string' ? str.trim() : null;
+  if (!str) {
+    return {};
+  }
+  return parseRawJson(str, true) || parseHeaders(str);
+};
+
+function hasRequestBody(method) {
+  if (typeof method != 'string') {
+    return false;
+  }
+  method = method.toUpperCase();
+  return !(method === 'GET' || method === 'HEAD' ||
+  method === 'OPTIONS' || method === 'CONNECT');
+}
+
+exports.hasRequestBody = hasRequestBody;
+
+var NON_LATIN1_RE = /[^\x00-\xFF]/g;
+exports.encodeNonLatin1Char = function(str) {
+  if (!str || typeof str != 'string') {
+    return '';
+  }
+  /*eslint no-control-regex: "off"*/
+  return  str && str.replace(NON_LATIN1_RE, safeEncodeURIComponent);
+};
+
+function formatSemer(ver) {
+  return ver ? ver.split('.').map(function(v) {
+    v = parseInt(v, 10) || 0;
+    return v > 9 ? v : '0' + v;
+  }).join('.') : '';
+}
+
+function compareVersion(v1, v2) {
+  var test1 = '';
+  var test2 = '';
+  var index = v1 && v1.indexOf('-');
+  if (index > -1) {
+    test1 = v1.slice(index + 1);
+    v1 = v1.slice(0, index);
+  }
+  index = v2 && v2.indexOf('-');
+  if (index > -1) {
+    test2 = v2.slice(index + 1);
+    v2 = v2.slice(0, index);
+  }
+  v1 = formatSemer(v1);
+  v2 = formatSemer(v2);
+  if (v1 > v2) {
+    return true;
+  }
+  if (v2 > v1) {
+    return false;
+  }
+
+  return test1 < test2;
+}
+exports.compareVersion = compareVersion;
+
+function getHexLine(line) {
+  var index = line.indexOf('  ') + 2;
+  return line.substring(index, line.indexOf('  ', index)).trim();
+}
+
+exports.getHexText = function (text) {
+  if (!text) {
+    return '';
+  }
+  return text.split('\n').map(getHexLine).join('\n');
+};
+
+function triggerPageChange(name) {
+  try {
+    var onPageChange = window.parent.onWhistlePageChange;
+    if (typeof onPageChange === 'function') {
+      onPageChange(name, location.href);
+    }
+  } catch (e) {}
+}
+
+exports.triggerPageChange = triggerPageChange;
+
+function changePageName(name) {
+  var hash = location.hash.substring(1);
+  var index = hash.indexOf('?');
+  hash = index === -1 ? '' : hash.substring(index);
+  location.hash = name + hash;
+  triggerPageChange(name);
+}
+
+exports.changePageName = changePageName;
+
+exports.getTempName = function() {
+  return Date.now() + '' + Math.floor(Math.random() * 10000);
+};
+
+function readFile(file, callback, type) {
+  var reader = new FileReader();
+  var done;
+  var execCallback = function(err, result) {
+    if (done) {
+      return;
+    }
+    done = true;
+    if (err) {
+      reader.abort();
+      return alert(err.message);
+    }
+    callback(result);
+  };
+  var isText = type === 'text';
+  reader[isText ? 'readAsText' : 'readAsArrayBuffer'](file);
+  reader.onerror = execCallback;
+  reader.onabort = function() {
+    execCallback(new Error('Aborted'));
+  };
+  reader.onload = function () {
+    var result = reader.result;
+    try {
+      execCallback(null, isText ? result : fromByteArray(new window.Uint8Array(result)));
+    } catch(e) {
+      execCallback(e);
+    }
+  };
+  return reader;
+}
+
+exports.readFileAsBase64 = function(file, callback) {
+  return readFile(file, callback);
+};
+
+exports.readFileAsText = function(file, callback) {
+  return readFile(file, callback, 'text');
 };

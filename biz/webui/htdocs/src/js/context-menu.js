@@ -54,7 +54,7 @@ var ContextMenu = React.createClass({
     return (
         <div
           onClick={this.onClick}
-          className="w-context-menu"
+          className={'w-context-menu ' + (data.className || '')}
           onContextMenu={this.preventDefault}
           style={{left: data.left, top: data.top, display: data.visible ? '' : 'none'}}
         >
@@ -70,6 +70,7 @@ var ContextMenu = React.createClass({
               >
                 <p className="w-ctx-item-tt">{item.name}</p>
                 {subList ? <span className="glyphicon glyphicon-play"></span> : undefined}
+                {subList ? <div className="w-ctx-menu-gap"></div> : undefined}
                 {
                   subList ? (
                     <ul className="w-ctx-menu-list">

@@ -31,7 +31,7 @@
 
 .w-values-list .glyphicon {display: none!important;}
 .w-values-list a {font-weight: normal!important;}
-.w-disabled .glyphicon-ok {color: #ccc!important;}
+.w-disabled .glyphicon-ok, .w-disabled .glyphicon-stop {color: #ccc!important;}
 
 .w-rules-settings-dialog .modal-dialog {width: 336px;}
 .w-values-settings-dialog .modal-dialog {width: 282px;}
@@ -45,7 +45,7 @@
 .w-https-settings label {font-weight: normal;}
 .w-https-settings p {margin: 10px 0;}
 
-.w-has-key {cursor: pointer; text-decoration: underline;}
+.w-is-link {cursor: pointer; text-decoration: underline;}
 
 .w-choose-filte-type .modal-dialog {width: 456px}
 .w-choose-filte-type-label {white-space: nowrap;}
@@ -54,17 +54,18 @@
 
 .w-confirm-import-dialog .modal-dialog { width: 320px; font-weight: bold; }
 
-.w-show-left-menu-btn { padding: 0 12px!important; }
+.w-show-left-menu-btn { padding: 0 12px!important; margin-right: 0!important; }
 .w-left-menu { background: #f1f3f4; border: 1px solid #ccc; border-bottom: none; display: none; }
 .w-show-left-menu .w-left-menu { display: block; }
 .w-show-left-menu .w-nav-menu { display: none; }
 .w-left-menu a { display: block; position: relative; padding: 10px; text-decoration: none!important; color: #000; }
 .w-left-menu a span { margin-right: 5px; }
 .w-left-menu-tips {
-  border: 1px solid #ccc; padding: 6px 10px; background: #fff; display: none;
-  left: 42px; top: 3px; position: absolute; z-index: 1; border-radius: 2px;
+  padding: 6px 10px; display: none; left: 47px; top: 3px; position: absolute;
+  z-index: 1; border-radius: 4px;
 }
-.w-left-menu a:hover .w-left-menu-tips { display: block; color: #000; }
+.w-left-menu a:hover .w-left-menu-tips { display: block; color: #000; background-color: #f1f3f4;
+  font-weight: bold;  border: 1px solid #ccc;}
 .w-left-menu a .w-left-menu-tips:hover { display: none; }
 .w-menu .w-import-menu, .w-menu .w-export-menu, .w-menu .w-remove-menu-list { display: none; }
 .w-show-left-menu .w-import-menu, .w-show-left-menu .w-export-menu,

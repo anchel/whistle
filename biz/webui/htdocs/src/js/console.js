@@ -5,17 +5,24 @@ var React = require('react');
 var ReactDOM = require('react-dom');
 
 var JSONTree = require('./components/react-json-tree')['default'];
+var ExpandCollapse = require('./expand-collapse');
 var util = require('./util');
 var dataCenter = require('./data-center');
 var FilterInput = require('./filter-input');
 var DropDown = require('./dropdown');
+var RecordBtn = require('./record-btn');
+var events = require('./events');
+var storage = require('./storage');
+
+var MAX_COUNT = 90;
+var MAX_FILE_SIZE = 1024 * 1024 * 2;
 
 var allLogs = {
   value: '',
   text: 'All logs'
 };
 
-function parseLog(log) {
+function parseLog(log, expandRoot) {
   if (log.view) {
     return log.view;
   }
@@ -26,57 +33,133 @@ function parseLog(log) {
     });
     log.view = data.map(function(data) {
       if (typeof data === 'string' && data !== 'undefined') {
-        return <span>{hasNonStr ? '"' + data + '"' : data}</span>;
+        return <ExpandCollapse text={hasNonStr ? '"' + data + '"' : data} />;
       }
       if (!data || typeof data !== 'object') {
-        return <span style={{color: 'rgb(203, 75, 22)'}}>{data + ''}</span>;
+        return <ExpandCollapse wStyle={{color: 'rgb(203, 75, 22)'}} text={data + ''} />;
       }
-      return <JSONTree data={data} />;
+      return <JSONTree data={data} shouldExpandNode={expandRoot ? undefined : false} />;
     });
     return log.view;
   } catch(e) {}
-  return log.text;
+  return <ExpandCollapse text={log.text} />;
 }
 
 var Console = React.createClass({
   getInitialState: function() {
-    return { scrollToBottom: true, logIdList: [allLogs] };
+    return {
+      scrollToBottom: true,
+      logIdList: [allLogs],
+      levels: [
+        {
+          value: '',
+          text: 'All levels'
+        },
+        {
+          value: 'debug',
+          text: 'Debug'
+        },
+        {
+          value: 'info',
+          text: 'Info/Log'
+        },
+        {
+          value: 'warn',
+          text: 'Warn'
+        },
+        {
+          value: 'error',
+          text: 'Error'
+        },
+        {
+          value: 'fatal',
+          text: 'Fatal'
+        }
+      ],
+      expandRoot: storage.get('expandJsonRoot') != 1
+    };
   },
   componentDidMount: function() {
     var self = this;
     var container = this.container = ReactDOM.findDOMNode(self.refs.container);
     var content = this.content = ReactDOM.findDOMNode(self.refs.logContent);
-    dataCenter.on('log', function(logs) {
-      self.state.logs = logs;
+    var updateLogs = function(logs) {
+      var state = self.state;
+      var curLogs = state.logs;
+      if (curLogs !== logs && Array.isArray(curLogs)) {
+        logs.push.apply(logs, curLogs);
+      }
+      state.logs = logs;
+      util.filterLogList(state.logs, self.keyword);
       if (self.props.hide) {
         return;
       }
       var atBottom = util.scrollAtBottom(container, content);
       if (atBottom) {
-        var len = logs.length - 80;
-        if (len > 9) {
-          logs.splice(0, len);
-        }
+        var len = logs.length - MAX_COUNT;
+        len > 9 && util.trimLogList(logs, len, self.keyword);
       }
       self.setState({});
+    };
+
+    if (dataCenter.uploadLogs) {
+      updateLogs(dataCenter.uploadLogs);
+      dataCenter.uploadLogs = null;
+    }
+    events.on('uploadLogs', function(_, result) {
+      if (self.props.hide) {
+        return;
+      }
+      var logs = result.logs;
+      var curLogs = self.state.logs;
+      if (curLogs) {
+        curLogs.push.apply(curLogs, logs);
+        var overflow = curLogs.length - MAX_COUNT;
+        overflow > 19 && util.trimLogList(curLogs, overflow, self.keyword);
+      } else {
+        curLogs = logs;
+      }
+      updateLogs(curLogs);
     });
+    dataCenter.on('log', updateLogs);
     var timeout;
     $(container).on('scroll', function() {
       var data = self.state.logs;
       timeout && clearTimeout(timeout);
       if (data && (self.state.scrollToBottom = util.scrollAtBottom(container, content))) {
         timeout = setTimeout(function() {
-          var len = data.length - 80;
+          var len = data.length - MAX_COUNT;
           if (len > 9) {
-            data.splice(0, len);
+            util.trimLogList(data, len, self.keyword);
             self.setState({logs: data});
           }
         }, 2000);
       }
     });
   },
+  selectFile: function() {
+    ReactDOM.findDOMNode(this.refs.importData).click();
+  },
+  importData: function() {
+    var form = new FormData(ReactDOM.findDOMNode(this.refs.importDataForm));
+    var file = form.get('importData');
+    if (!file || !/\.log$/i.test(file.name)) {
+      return alert('Only supports .log file.');
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return alert('The file size cannot exceed 2m.');
+    }
+    util.readFileAsText(file, function(logs) {
+      logs = util.parseLogs(logs);
+      logs && events.trigger('uploadLogs', {logs: logs});
+    });
+    ReactDOM.findDOMNode(this.refs.importData).value = '';
+  },
   changeLogId: function(option) {
     dataCenter.changeLogId(option.value);
+  },
+  changeLevel: function(option) {
+    this.setState({ level: option.value });
   },
   clearLogs: function() {
     var data = this.state.logs;
@@ -111,8 +194,17 @@ var Console = React.createClass({
     }
   },
   onConsoleFilterChange: function(keyword) {
+    keyword = keyword.trim();
+    this.keyword = keyword;
+    var logs = this.state.logs;
+    var consoleKeyword = util.parseKeyword(keyword);
+    util.filterLogList(logs, consoleKeyword);
+    if (!keyword) {
+      var len = logs && (logs.length - MAX_COUNT);
+      len > 9 && logs.splice(0, len);
+    }
     this.setState({
-      consoleKeyword: util.parseKeyword(keyword)
+      consoleKeyword: consoleKeyword
     });
   },
   showNameInput: function(e) {
@@ -126,13 +218,16 @@ var Console = React.createClass({
   download: function() {
     var target = ReactDOM.findDOMNode(this.refs.nameInput);
     var name = target.value.trim();
-    var logs = this.state.logs.map(function(log) {
-      return {
-        id: log.id,
-        text: log.text,
-        level: log.level,
-        date: log.date
-      };
+    var logs = [];
+    this.state.logs.forEach(function(log) {
+      if (!log.hide) {
+        logs.push({
+          id: log.id,
+          text: log.text,
+          level: log.level,
+          date: log.date
+        });
+      }
     });
     target.value = '';
     ReactDOM.findDOMNode(this.refs.filename).value = name;
@@ -152,6 +247,23 @@ var Console = React.createClass({
   hideNameInput: function() {
     this.setState({ showNameInput: false });
   },
+  handleAction: function(type) {
+    if (type === 'top') {
+      return this.scrollTop();
+    }
+    if (type === 'bottom') {
+      return this.autoRefresh();
+    }
+    if (type === 'pause') {
+      dataCenter.pauseConsoleRecord();
+      return;
+    }
+    var refresh = type === 'refresh';
+    dataCenter.stopConsoleRecord(!refresh);
+    if (refresh) {
+      return this.autoRefresh();
+    }
+  },
   onBeforeShow: function() {
     var list = dataCenter.getLogIdList() || [];
     list = list.map(function(id) {
@@ -165,11 +277,16 @@ var Console = React.createClass({
       logIdList: list
     });
   },
+  changeExpandRoot: function(e) {
+    this.state.expandRoot = e.target.checked;
+  },
   render: function() {
     var state = this.state;
     var logs = state.logs || [];
-    var consoleKeyword = state.consoleKeyword;
     var logIdList = state.logIdList;
+    var level = state.level;
+    var expandRoot = state.expandRoot;
+    var disabled = !util.hasVisibleLog(logs);
 
     return (
       <div className={'fill orient-vertical-box w-textarea w-detail-page-log' + (this.props.hide ? ' hide' : '')}>
@@ -180,12 +297,21 @@ var Console = React.createClass({
             onChange={this.changeLogId}
             options={logIdList}
           />
-          <div className={'w-textarea-bar' + (logs.length ? '' : ' hide')}>
-            <a className="w-download" onDoubleClick={this.download}
-              onClick={this.showNameInput} href="javascript:;" draggable="false">Download</a>
-            <a className="w-auto-refresh" onDoubleClick={this.stopAutoRefresh}
-              onClick={this.autoRefresh} href="javascript:;" draggable="false">AutoRefresh</a>
-            <a className="w-clear" onClick={this.clearLogs} href="javascript:;" draggable="false">Clear</a>
+          <DropDown
+            onChange={this.changeLevel}
+            options={state.levels}
+          />
+          <label className="w-log-expand-root">
+            <input type="checkbox" defaultChecked={expandRoot} onChange={this.changeExpandRoot} />
+            Expand JSON Root 
+          </label>
+          <div className="w-textarea-bar">
+            <a className="w-import" onClick={this.selectFile}
+              href="javascript:;" draggable="false">Import</a>
+            <a className={'w-download' + (disabled ? ' w-disabled' : '')} onDoubleClick={disabled ? undefined : this.download}
+              onClick={disabled ? undefined : this.showNameInput} href="javascript:;" draggable="false">Export</a>
+            <RecordBtn onClick={this.handleAction} />
+            <a className={'w-clear' + (disabled ? ' w-disabled' : '')} onClick={disabled ? undefined : this.clearLogs} href="javascript:;" draggable="false">Clear</a>
             <div onMouseDown={this.preventBlur}
               style={{display: this.state.showNameInput ? 'block' : 'none'}}
               className="shadow w-textarea-input"><input ref="nameInput"
@@ -199,31 +325,27 @@ var Console = React.createClass({
             </div>
             <form ref="downloadForm" action="cgi-bin/download" style={{display: 'none'}}
               method="post" target="downloadTargetFrame">
+              <input ref="type" name="type" value="log" type="hidden" />
               <input ref="filename" name="filename" type="hidden" />
               <input ref="content" name="content" type="hidden" />
             </form>
           </div>
         </div>
+        <form ref="importDataForm" encType="multipart/form-data" style={{display: 'none'}}>
+          <input ref="importData" onChange={this.importData} type="file" name="importData" accept=".log" />
+        </form>
         <div ref="container" className="fill w-detail-log-content">
           <ul ref="logContent">
             {logs.map(function(log) {
               var logId = log.logId;
               logId = logId ? ' (LogID: ' + logId + ')' : '';
               var date = 'Date: ' + (new Date(log.date)).toLocaleString() + logId + '\r\n';
-              var hide = '';
-              if (consoleKeyword) {
-                var level = consoleKeyword.level;
-                if (level && log.level !== level) {
-                  hide = ' hide';
-                } else {
-                  hide = util.checkLogText(date + log.text, consoleKeyword);
-                }
-              }
+              var hide = (log.hide || (level && !hide && log.level !== level)) ? ' hide' : '';
               return (
                 <li key={log.id} title={log.level.toUpperCase()} className={'w-' + log.level + hide}>
                   <pre>
                     {date}
-                    {parseLog(log)}
+                    {parseLog(log, expandRoot)}
                   </pre>
                 </li>
               );

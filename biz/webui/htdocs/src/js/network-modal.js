@@ -6,7 +6,7 @@ var WIN_NAME_PRE = '__whistle_' + location.href.replace(/\/[^/]*([#?].*)?$/, '/'
 
 function NetworkModal(list) {
   this._list = updateOrder(list);
-  this.list =list.slice(0, MAX_LENGTH);
+  this.list = list.slice(0, MAX_LENGTH);
 }
 
 NetworkModal.MAX_COUNT = MAX_COUNT;
@@ -35,6 +35,10 @@ proto.search = function(keyword) {
   this._keywordRE = util.toRegExp(this._keyword);
   this._keyword = this._keyword.toLowerCase();
   this.filter();
+  if (!this._keyword) {
+    var overflow = this._list.length - MAX_COUNT;
+    overflow > 0 && this._list.splice(0, overflow);
+  }
   return keyword;
 };
 
@@ -105,7 +109,8 @@ proto.filter = function(newList) {
     case 'result':
     case 'r':
       list.forEach(function(item) {
-        item.hide = self.checkNot(item.res.statusCode == null || !self.checkKeywork(item.res.statusCode + ''));
+        var status = item.res.statusCode;
+        item.hide = self.checkNot(!self.checkKeywork(status == null ? '-' : String(status)));
       });
       break;
     case 'method':
@@ -216,6 +221,29 @@ proto.clear = function clear() {
   this.list = [];
   this.updateDisplayCount();
   return this;
+};
+
+proto.removeByHostList = function(hostList) {
+  var list = this._list;
+  for (var i = list.length - 1; i >= 0; --i) {
+    var item = list[i];
+    if (hostList.indexOf(item.isHttps ? item.path : item.hostname) !== -1) {
+      list.splice(i, 1);
+    }
+  }
+  this.update();
+  this.updateDisplayCount();
+};
+
+proto.removeByUrlList = function(urlList) {
+  var list = this._list;
+  for (var i = list.length - 1; i >= 0; --i) {
+    if (urlList.indexOf(list[i].url.replace(/\?.*$/, '').substring(0, 1024)) !== -1) {
+      list.splice(i, 1);
+    }
+  }
+  this.update();
+  this.updateDisplayCount();
 };
 
 proto.removeSelectedItems = function() {
@@ -343,9 +371,26 @@ proto.next = function() {
 
 
 
-function updateList(list, len) {
+function updateList(list, len, keyword) {
+  if (!(len > 0)) {
+    return;
+  }
   var activeItem = getActive(list);
-  list.splice(0, len);
+  if (keyword) {
+    var i = 0;
+    var length = list.length;
+    while(len > 0 && i < length) {
+      if (list[i].hide) {
+        --length;
+        --len;
+        list.splice(i, 1);
+      } else {
+        ++i;
+      }
+    }
+    len = list.length - MAX_COUNT - 2;
+  }
+  len > 0 && list.splice(0, len);
   if (activeItem && list.indexOf(activeItem) === -1) {
     list[0] = activeItem;
   }
@@ -355,19 +400,7 @@ proto.update = function(scrollAtBottom, force) {
   updateOrder(this._list, force);
   if (scrollAtBottom) {
     var exceed = Math.min(this._list.length - MAX_LENGTH, 100);
-    if (this.hasKeyword()) {
-      for (var i = 0; i < exceed; i++) {
-        var item = this._list[i];
-        if (!item.hide) {
-          if (i > 0) {
-            updateList(this._list, i);
-          }
-          break;
-        }
-      }
-    } if (exceed > 0) {
-      updateList(this._list, exceed);
-    }
+    updateList(this._list, exceed, this._keyword);
   }
 
   this.list = this._list.slice(0, MAX_LENGTH);

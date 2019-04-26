@@ -1,10 +1,11 @@
 var net = require('net');
 var rules = require('../lib/rules');
 var util = require('../lib/util');
+var handleUIReq = require('./webui/lib').handleRequest;
+var handleWeinreReq = require('./weinre');
 
 var HTTP_PROXY_RE = /^x?(?:proxy|http-proxy|http2https-proxy|https2http-proxy|internal-proxy):\/\//;
-var INTERNAL_APP;
-var WEBUI_PATH, PLUGIN_RE, PREVIEW_PATH_RE;
+var INTERNAL_APP, WEBUI_PATH, PLUGIN_RE, PREVIEW_PATH_RE;
 
 module.exports = function(req, res, next) {
   var config = this.config;
@@ -13,29 +14,36 @@ module.exports = function(req, res, next) {
     WEBUI_PATH = config.WEBUI_PATH;
     PREVIEW_PATH_RE = config.PREVIEW_PATH_RE;
     var webuiPathRe = util.escapeRegExp(WEBUI_PATH);
-    INTERNAL_APP = new RegExp('^' + webuiPathRe + '(log|weinre)\\.(\\d{1,5})/');
+    INTERNAL_APP = new RegExp('^' + webuiPathRe + '(log|weinre|cgi)(?:\\.(\\d{1,5}))?/');
     PLUGIN_RE = new RegExp('^' + webuiPathRe + 'whistle\\.([a-z\\d_-]+)/');
   }
   var fullUrl = util.getFullUrl(req);
   var host = req.headers.host.split(':');
-  var port = host[1] || 80;
+  var port = host[1] || (req.isHttps ? 443 : 80);
   var bypass;
   host = host[0];
-  var transformPort, proxyUrl;
+  var transformPort, proxyUrl, isWeinre, isOthers;
   var isWebUI = req.path.indexOf(WEBUI_PATH) === 0;
   if (isWebUI) {
     isWebUI = !config.pureProxy;
     if (isWebUI) {
       if (INTERNAL_APP.test(req.path)) {
         transformPort = RegExp.$2;
-        proxyUrl = transformPort != (RegExp.$1 === 'weinre' ? config.weinreport : config.uiport);
+        isWeinre = RegExp.$1 === 'weinre';
+        if (transformPort) {
+          isOthers = proxyUrl = transformPort != config.port;
+        } else {
+          proxyUrl = false;
+          transformPort = config.port;
+        }
       } else if (PLUGIN_RE.test(req.path)) {
         proxyUrl = !pluginMgr.getPlugin(RegExp.$1 + ':');
-      } else {
+      } else if (!req.headers[config.WEBUI_HEAD]) {
         isWebUI = false;
       }
       if (proxyUrl) {
-        proxyUrl = rules.resolveProxy(fullUrl);
+        req.curUrl = fullUrl;
+        proxyUrl = rules.resolveProxy(req);
         proxyUrl = proxyUrl && proxyUrl.matcher;
         if (proxyUrl && HTTP_PROXY_RE.test(proxyUrl)) {
           proxyUrl = proxyUrl.replace(HTTP_PROXY_RE, '');
@@ -45,9 +53,12 @@ module.exports = function(req, res, next) {
       }
     }
   } else {
-    isWebUI = req.headers[config.WEBUI_HEAD] || config.isLocalUIUrl(host);
-    if (!isWebUI && net.isIP(host) && util.isLocalAddress(host)) {
-      isWebUI = port == config.port || port == config.uiport;
+    isWebUI = req.headers[config.WEBUI_HEAD];
+    if (!isWebUI) {
+      isWebUI = config.isLocalUIUrl(host);
+      if (isWebUI ? net.isIP(host) : util.isLocalAddress(host)) {
+        isWebUI = port == config.port || port == config.uiport;
+      }
     }
     if (isWebUI) {
       if (req.path.indexOf('/_/') === 0) {
@@ -68,37 +79,34 @@ module.exports = function(req, res, next) {
   if (bypass) {
     return next();
   }
-  var pluginHomePage, localRule;
+  var localRule;
+  req.curUrl = fullUrl;
   if (proxyUrl) {
-    rules.resolveHost('http://' + proxyUrl, function(err, ip) {
+    req.curUrl = 'http://' + proxyUrl;
+    rules.resolveHost(req, function(err, ip) {
       if (err) {
         return next(err);
       }
       var colon = proxyUrl.indexOf(':');
       var proxyPort = colon === -1 ? 80 : proxyUrl.substring(colon + 1);
       req.headers.host = 'local.whistlejs.com';
+      util.setClientId(req.headers, rules.resolveEnable(req), rules.resolveDisable(req), req.clientIp);
       util.transformReq(req, res, proxyPort > 0 ? proxyPort : 80, ip);
     });
   } else if (isWebUI) {
-    req.url = req.url.replace(transformPort ? INTERNAL_APP : WEBUI_PATH, '/');
-    util.transformReq(req, res, transformPort || config.uiport);
-  } else if (pluginHomePage || (pluginHomePage = pluginMgr.getPluginByHomePage(fullUrl))) {
-    pluginMgr.loadPlugin(pluginHomePage, function(err, ports) {
-      if (err || !ports.uiPort) {
-        res.response(util.wrapResponse({
-          statusCode: err ? 500 : 404,
-          headers: {
-            'content-type': 'text/html; charset=utf-8'
-          },
-          body: '<pre>' + (err || 'Not Found') + '</pre>'
-        }));
-        return;
+    if (isOthers) {
+      util.transformReq(req, res, transformPort);
+    } else {
+      req.url = req.url.replace(transformPort ? INTERNAL_APP : WEBUI_PATH, '/');
+      if (isWeinre) {
+        handleWeinreReq(req, res);
+      } else {
+        handleUIReq(req, res);
       }
-      util.transformReq(req, res, ports.uiPort);
-    });
-  } else if (localRule = rules.resolveLocalRule(fullUrl)) {
+    }
+  } else if (localRule = rules.resolveLocalRule(req)) {
     req.url = localRule.url;
-    util.transformReq(req, res, config.uiport);
+    handleUIReq(req, res);
   } else {
     next();
   }

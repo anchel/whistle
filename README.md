@@ -1,3 +1,5 @@
+English | [简体中文](./README-zh_CN.md)
+
 <p align="center">
   <a href="https://avwo.github.io/whistle/">
     <img alt="whistle logo" src="https://raw.githubusercontent.com/avwo/whistle/master/biz/webui/htdocs/img/whistle.png">
@@ -17,7 +19,6 @@
 [中文 README](README-zh_CN.md)
 
 **whistle** is a cross-platform web debugging tool based on Node.js.
-
 
 It features the following:
 
@@ -146,7 +147,6 @@ After installation, execute `whistle help` or `w2 help` to view help information
 		-P, --uiport [uiport]                           whistle ui port (8900 by default)
 		-m, --middlewares [script path or module name]  express middlewares path (as: xx,yy/zz.js)
 		-M, --mode [mode]                               the whistle mode (as: pureProxy|debug|multiEnv)
-		-u, --uipath [script path]                      web ui plugin path
 		-t, --timeout [ms]                              request timeout (66000 ms by default)
 		-e, --extra [extraData]                         extra data for plugin
 		-f, --secureFilter [secureFilter]               the script path of secure filter
@@ -319,6 +319,7 @@ Open [Rules](http://local.whistlejs.com/) tab in whistle, and create a group nam
 
 # Documentation
 1. [Install and start](https://avwo.github.io/whistle/install.html)
+2. [CLI operation](https://avwo.github.io/whistle/cli.html)
 2. [How to update](https://avwo.github.io/whistle/update.html)
 3. [Quickly start](https://avwo.github.io/whistle/quickstart.html)
 4. [Configuration mode](https://avwo.github.io/whistle/mode.html)

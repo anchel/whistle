@@ -15,9 +15,9 @@ var events = require('./events');
 var rulesCtxMenuList = [
   { name: 'Copy' },
   { name: 'Enable', action: 'Save' },
+  { name: 'Create' },
   { name: 'Rename' },
   { name: 'Delete' },
-  { name: 'Create' },
   { name: 'Export' },
   { name: 'Import' },
   { name: 'Help', sep: true }
@@ -25,9 +25,9 @@ var rulesCtxMenuList = [
 var valuesCtxMenuList = [
   { name: 'Copy' },
   { name: 'Save' },
+  { name: 'Create' },
   { name: 'Rename' },
   { name: 'Delete' },
-  { name: 'Create' },
   {
     name: 'JSON',
     list: [
@@ -112,9 +112,6 @@ var List = React.createClass({
         var modal = self.props.modal;
         if (e.keyCode === 83) {
           modal.getChangedList().forEach(trigger);
-          return false;
-        } else if (self.props.name == 'rules' && e.keyCode == 70 && e.shiftKey) {
-          self.formatJson(modal.getActive());
           return false;
         }
       }
@@ -250,7 +247,7 @@ var List = React.createClass({
   },
   formatJson: function(item) {
     var value = item && item.value || '';
-    if (/[^\s]/.test(value)) {
+    if (/\S/.test(value)) {
       var json = util.parseRawJson(value);
       if (json) {
         json = JSON.stringify(json, null, '  ');
@@ -350,10 +347,14 @@ var List = React.createClass({
     }
     data.list[0].copyText = name;
     data.list[0].disabled = disabled;
-    data.list[2].disabled = isDefault || disabled;
     data.list[3].disabled = isDefault || disabled;
+    data.list[4].disabled = isDefault || disabled;
     this.refs.contextMenu.show(data);
     e.preventDefault();
+  },
+  onAddRule: function(name) {
+    this.props.modal.setActive(name);
+    this.setState({});
   },
   render: function() {
     var self = this;
@@ -375,7 +376,7 @@ var List = React.createClass({
 
     //不设置height为0，滚动会有问题
     return (
-        <Divider hide={this.props.hide} leftWidth="200">
+        <Divider hide={this.props.hide} leftWidth="220">
         <div className="fill orient-vertical-box w-list-left">
           <div ref="list" tabIndex="0" onContextMenu={this.onContextMenu}
             className={'fill orient-vertical-box w-list-data ' + (this.props.className || '') + (this.props.disabled ? ' w-disabled' : '')}
@@ -405,7 +406,9 @@ var List = React.createClass({
                               'w-active': item.active,
                               'w-changed': item.changed,
                               'w-selected': item.selected
-                            })}>{name}<span className="glyphicon glyphicon-ok"></span></a>;
+                            })}>
+                            {name}<span className="glyphicon glyphicon-ok"></span>
+                            </a>;
                 })
               }
             </div>

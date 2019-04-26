@@ -56,3 +56,19 @@
   <img src="img/ios10.3_ca.PNG" width="320">
 
 15. [更新whistle](./update.html)时出现失败或更新后 `w2 -V` 指向老的版本，可以参考：[更新文档](./update.html)
+16. android 6.0 之后的一些app在成功安装证书后仍然无法对https连接进行手抓包，有可能是该app没有添加信任用户自定义证书的权限。请确认该app是否有如下配置：
+```
+<base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+        <certificates src="system" />
+        <certificates src="user" />
+    </trust-anchors>
+</base-config>
+```
+  这主要是因为android 6.0之后的版本默认配置发生了变化，[更多请看Android开发文档](https://developer.android.com/training/articles/security-config#base-config)。
+17. 如何修改whistle本地存储目录
+  - 启动命令行指定 `-D baseDir`
+  - 配置环境变量 `WHISTLE_PATH=baseDir`
+18. 如何加载自定义证书
+
+新建一个目录(`/xxx/ssl`)，把自定义证书放到此目录，证书必须后缀为`.crt`格式，每个证书的key和crt文件名称必须一致(如：`test.key`、`test.crt`，支持多域名证书，如果是根证书名字必须为 `root.key`、`root.crt`)，启动是时加启动参数 `w2 start -z /xxx/ssl` 即可

@@ -10,6 +10,7 @@ var Network = require('./network');
 var About = require('./about');
 var Online = require('./online');
 var MenuItem = require('./menu-item');
+var RecordBtn = require('./record-btn');
 var EditorSettings = require('./editor-settings');
 var NetworkSettings = require('./network-settings');
 var Plugins = require('./plugins');
@@ -20,14 +21,21 @@ var events = require('./events');
 var storage = require('./storage');
 var Dialog = require('./dialog');
 var ListDialog = require('./list-dialog');
+var FilterBtn = require('./filter-btn');
+var FilesDialog = require('./files-dialog');
 var message = require('./message');
+var UpdateAllBtn = require('./update-all-btn');
 
 var JSON_RE = /^\s*(?:[\{｛][\w\W]+[\}｝]|\[[\w\W]+\])\s*$/;
 var DEFAULT = 'Default';
 var MAX_PLUGINS_TABS = 7;
 var MAX_FILE_SIZE = 1024 * 1024 * 64;
 var MAX_OBJECT_SIZE = 1024 * 1024 * 6;
+var MAX_LOG_SIZE = 1024 * 1024 * 2;
 var MAX_REPLAY_COUNT = 30;
+var LINK_SELECTOR = '.cm-js-type, .cm-js-http-url, .cm-string, .cm-js-at';
+var LINK_RE = /^"(https?:)?(\/\/[^/]\S+)"$/i;
+var AT_LINK_RE = /^@(https?:)?(\/\/[^/]\S+)$/i;
 var OPTIONS_WITH_SELECTED = ['removeSelected', 'exportWhistleFile', 'exportSazFile'];
 var RULES_ACTIONS = [
   {
@@ -74,6 +82,13 @@ var REMOVE_OPTIONS = [
     id: 'removeUnselected',
     disabled: true,
     title: 'Ctrl[Command] + Shift + D'
+  }
+];
+var ABORT_OPTIONS = [
+  {
+    name: 'Abort',
+    icon: 'ban-circle',
+    id: 'abort'
   }
 ];
 
@@ -144,14 +159,6 @@ function getPageName() {
   return hash;
 }
 
-function changePageName(name) {
-  var hash = location.hash.substring(1);
-  var index = hash.indexOf('?');
-  hash = index === -1 ? '' : hash.substring(index);
-  location.hash = name + hash;
-  triggerPageChange(name);
-}
-
 function compareSelectedNames(src, target) {
   var srcLen = src.length;
   var i;
@@ -189,30 +196,23 @@ function getValue(url) {
   return false;
 }
 
-function triggerPageChange(name) {
-  try {
-    var onPageChange = window.parent.onWhistlePageChange;
-    if (typeof onPageChange === 'function') {
-      onPageChange(name, location.href);
-    }
-  } catch (e) {}
-}
-
 var Index = React.createClass({
   getInitialState: function() {
     var modal = this.props.modal;
     var rules = modal.rules;
     var values = modal.values;
+    var networkMode = !!modal.server.networkMode;
+    var multiEnv = !!modal.server.multiEnv;
     var state = {
       replayCount: 1,
       allowMultipleChoice: modal.rules.allowMultipleChoice,
       backRulesFirst: modal.rules.backRulesFirst,
       syncWithSysHosts: modal.rules.syncWithSysHosts,
-      networkMode: modal.server.networkMode,
+      networkMode: networkMode,
       multiEnv: modal.server.multiEnv,
       isWin: modal.server.isWin
     };
-    var pageName = state.networkMode ? 'network' : getPageName();
+    var pageName = networkMode ? 'network' : getPageName();
     if (!pageName || pageName.indexOf('rules') != -1) {
       state.hasRules = true;
       state.name = 'rules';
@@ -302,7 +302,8 @@ var Index = React.createClass({
         });
       });
     }
-
+    var rulesModal = new ListModal(rulesList, rulesData);
+    var valuesModal = new ListModal(valuesList, valuesData);
     state.rulesTheme = rulesTheme;
     state.valuesTheme = valuesTheme;
     state.rulesFontSize = rulesFontSize;
@@ -313,12 +314,20 @@ var Index = React.createClass({
     state.disabledPlugins = modal.disabledPlugins;
     state.disabledAllRules = modal.disabledAllRules;
     state.disabledAllPlugins = modal.disabledAllPlugins;
-    state.interceptHttpsConnects = modal.interceptHttpsConnects;
-    state.rules = new ListModal(rulesList, rulesData);
+    state.interceptHttpsConnects = !multiEnv && modal.interceptHttpsConnects;
+    state.rules = rulesModal;
     state.rulesOptions = rulesOptions;
     state.pluginsOptions = this.createPluginsOptions(modal.plugins);
-    dataCenter.valuesModal = state.values = new ListModal(valuesList, valuesData);
+    dataCenter.valuesModal = state.values = valuesModal;
     state.valuesOptions = valuesOptions;
+
+    if (rulesModal.exists(dataCenter.activeRulesName)) {
+      this.setRulesActive(dataCenter.activeRulesName, rulesModal);
+    }
+    if (valuesModal.exists(dataCenter.activeValuesName)) {
+      this.setRulesActive(dataCenter.activeValuesName, valuesModal);
+    }
+
     state.networkOptions = [
       {
         name: 'Remove All Sessions',
@@ -395,7 +404,7 @@ var Index = React.createClass({
     state.exportFileType = storage.get('exportFileType');
     var showLeftMenu = storage.get('showLeftMenu');
     state.showLeftMenu = showLeftMenu == null ? true : showLeftMenu;
-    triggerPageChange(state.name);
+    util.triggerPageChange(state.name);
     return state;
   },
   getListByName: function(name, type) {
@@ -438,23 +447,11 @@ var Index = React.createClass({
         name: name.slice(0, -1),
         icon: 'checkbox',
         mtime: plugin.mtime,
-        homepage: plugin.homepage
+        homepage: plugin.homepage,
+        latest: plugin.latest
       });
     });
     return pluginsOptions;
-  },
-  setFilterTextState: function(changed) {
-    if (this.state.name === 'network') {
-      if (!changed) {
-        var hasFilterText = dataCenter.hasFilterText();
-        changed = hasFilterText !== this.state.hasFilterText;
-      }
-      if (changed) {
-        this.setState({
-          hasFilterText: hasFilterText
-        });
-      }
-    }
   },
   reloadRules: function(data) {
     var self = this;
@@ -575,8 +572,14 @@ var Index = React.createClass({
       self.valuesChanged = true;
       self.showReloadValues();
     });
-    this.setFilterTextState();
-    setInterval(this.setFilterTextState, 5000);
+    events.on('disableAllPlugins', function(e) {
+      self.disableAllPlugins(e);
+    });
+    events.on('showFiles', function(_, data) {
+      self.files = self.files || data;
+      self.showFiles();
+    });
+
     $(document)
       .on( 'dragleave', preventDefault)
       .on( 'dragenter', preventDefault)
@@ -584,17 +587,41 @@ var Index = React.createClass({
       .on('drop', function(e) {
         e.preventDefault();
         var files = e.originalEvent.dataTransfer.files;
-        if (!files || !files.length
-            || $(e.target).closest('.w-frames-composer').length) {
+        var file = files && files[0];
+        if (!file) {
           return;
+        }
+        if ($('.w-files-dialog.in').length) {
+          return events.trigger('uploadFile', file);
         }
         var data;
         var name = self.state.name;
+        var target = $(e.target);
         if (name === 'network') {
+          if (target.closest('.w-frames-composer').length) {
+            return;
+          }
+          if (/\.log$/i.test(file.name)) {
+            if (file.size > MAX_LOG_SIZE) {
+              return alert('The file size cannot exceed 2m.');
+            }
+            util.readFileAsText(file, function(logs) {
+              logs = util.parseLogs(logs);
+              if (!logs) {
+                return;
+              }
+              if (dataCenter.uploadLogs !== null) {
+                dataCenter.uploadLogs = logs;
+              }
+              events.trigger('showLog');
+              events.trigger('uploadLogs', {logs: logs});
+            });
+            return;
+          }
           data = new FormData();
           data.append('importSessions', files[0]);
           self.uploadSessionsForm(data);
-        } if ($(e.target).closest('.w-divider-left').length) {
+        } if (target.closest('.w-divider-left').length) {
           if (name === 'rules') {
             data = new FormData();
             data.append('rules', files[0]);
@@ -608,6 +635,14 @@ var Index = React.createClass({
           }
         }
       });
+    var removeItem = function(e) {
+      var target = e.target;
+      if ( target.nodeName == 'A'
+          && $(target).parent().hasClass('w-list-data')) {
+        self.state.name == 'rules' ? self.removeRules() : self.removeValues();
+      }
+      e.preventDefault();
+    };
     $(window).on('hashchange', function() {
       var pageName = self.state.networkMode ? 'network' : getPageName();
       if (!pageName || pageName.indexOf('rules') != -1) {
@@ -628,6 +663,7 @@ var Index = React.createClass({
         }
       }
     }).on('keydown', function(e) {
+      e.keyCode == 46 && removeItem(e);
       if (!e.ctrlKey && !e.metaKey) {
         if (e.keyCode === 112) {
           e.preventDefault();
@@ -646,16 +682,7 @@ var Index = React.createClass({
           self.clear();
         }
       }
-
-      if (e.keyCode == 68) {
-        var target = e.target;
-        if ( target.nodeName == 'A'
-            && $(target).parent().hasClass('w-list-data')) {
-          self.state.name == 'rules' ? self.removeRules() : self.removeValues();
-        }
-        e.preventDefault();
-      }
-
+      e.keyCode == 68 && removeItem(e);
       var modal = self.state.network;
       if (isNetwork && e.keyCode === 83) {
         e.preventDefault();
@@ -700,30 +727,51 @@ var Index = React.createClass({
       return index > 1 ? url.substring(1, index) : null;
     }
 
-    $(document.body).on('mouseenter', '.cm-js-type', function(e) {
-      if (self.state.name !== 'rules' || !(e.ctrlKey || e.metaKey)) {
+    var isEditor = function() {
+      var name = self.state.name;
+      return name === 'rules' || name === 'values';
+    };
+
+    $(document.body).on('mouseenter', LINK_SELECTOR, function(e) {
+      if (!isEditor() || !(e.ctrlKey || e.metaKey)) {
         return;
       }
       var elem = $(this);
-      if (getKey(elem.text())) {
-        elem.addClass('w-has-key');
+      if (elem.hasClass('cm-js-http-url') || elem.hasClass('cm-string')
+        || elem.hasClass('cm-js-at') || getKey(elem.text())) {
+        elem.addClass('w-is-link');
       }
-    }).on('mouseleave', '.cm-js-type', function(e) {
-      if (self.state.name === 'rules') {
-        $(this).removeClass('w-has-key');
-      }
-    }).on('mousedown', '.cm-js-type', function(e) {
-      if (self.state.name !== 'rules') {
+    }).on('mouseleave', LINK_SELECTOR, function(e) {
+      $(this).removeClass('w-is-link');
+    }).on('mousedown', LINK_SELECTOR, function(e) {
+      if (!isEditor() || !(e.ctrlKey || e.metaKey)) {
         return;
       }
       var elem = $(this);
-      if (!e.ctrlKey && !e.metaKey && !elem.hasClass('w-has-key')) {
+      var text = elem.text();
+      if (elem.hasClass('cm-js-at')) {
+        if (AT_LINK_RE.test(text)) {
+          window.open((RegExp.$1 || 'http:') + RegExp.$2);
+        }
         return;
       }
-      var name = getKey(elem.text());
+      if (elem.hasClass('cm-string')) {
+        if (LINK_RE.test(text)) {
+          window.open((RegExp.$1 || 'http:') + RegExp.$2);
+        }
+        return;
+      }
+      if (elem.hasClass('cm-js-http-url')) {
+        if (!/^https?:\/\//i.test(text)) {
+          text = 'http:' + (text[0] === '/' ? '' : '//') + text;
+        }
+        window.open(text);
+        return;
+      }
+      var name = getKey(text);
       if (name) {
         self.showAndActiveValues({name: name});
-        return false;
+        return;
       }
     });
 
@@ -736,12 +784,12 @@ var Index = React.createClass({
         || state.disabledAllRules !== data.disabledAllRules
         || state.allowMultipleChoice !== data.allowMultipleChoice
         || state.disabledAllPlugins !== data.disabledAllPlugins) {
-        self.setState({
-          interceptHttpsConnects: data.interceptHttpsConnects,
-          disabledAllRules: data.disabledAllRules,
-          allowMultipleChoice: data.allowMultipleChoice,
-          disabledAllPlugins: data.disabledAllPlugins
-        });
+        state.interceptHttpsConnects = data.interceptHttpsConnects;
+        state.disabledAllRules = data.disabledAllRules;
+        state.allowMultipleChoice = data.allowMultipleChoice;
+        state.disabledAllPlugins = data.disabledAllPlugins;
+        protocols.setPlugins(state);
+        self.setState({});
       }
     });
     dataCenter.on('rules', function(data) {
@@ -790,8 +838,12 @@ var Index = React.createClass({
     });
 
     events.on('importSessions', self.importSessions);
+    events.on('filterSessions', self.showSettings);
     events.on('exportSessions', function(e, curItem) {
       self.exportData(e, getFocusItemList(curItem));
+    });
+    events.on('abortRequest', function(e, curItem) {
+      self.abort(getFocusItemList(curItem));
     });
     events.on('uploadSessions', function(e, data) {
       var sessions = getFocusItemList(data && data.curItem);
@@ -817,7 +869,11 @@ var Index = React.createClass({
     events.on('removeOthers', function(e, item) {
       var modal = self.state.network;
       if (item && modal) {
-        modal.removeOthers(item);
+        if (item.selected) {
+          modal.removeUnselectedItems();
+        } else {
+          modal.removeOthers(item);
+        }
         self.setState({});
       }
     });
@@ -907,8 +963,9 @@ var Index = React.createClass({
         for (var i = 0, len = pluginsOptions.length; i < len; i++) {
           var plugin = pluginsOptions[i];
           var oldPlugin = oldPluginsOptions[i];
-          if (plugin.name != oldPlugin.name || plugin.mtime != oldPlugin.mtime
-          || (oldDisabledPlugins[plugin.name] != disabledPlugins[plugin.name])) {
+          if (plugin.name != oldPlugin.name
+            || plugin.latest !== oldPlugin.latest || plugin.mtime != oldPlugin.mtime
+            || (oldDisabledPlugins[plugin.name] != disabledPlugins[plugin.name])) {
             hasUpdate = true;
             break;
           }
@@ -957,10 +1014,14 @@ var Index = React.createClass({
   },
   getLogIdListFromRules: function() {
     var text = this.getAllRulesText();
-    if (text = text.match(/\slog:\/\/[^/\\{}()<>\s]{1,36}\s/g)) {
+    if (text = text.match(/\slog:\/\/(?:\{[^\s]{1,36}\}|[^/\\{}()<>\s]{1,36})\s/g)) {
       var flags = {};
       text = text.map(function(logId) {
-        return util.removeProtocol(logId.trim());
+        logId = util.removeProtocol(logId.trim());
+        if (logId[0] === '{') {
+          logId = logId.slice(1, -1);
+        }
+        return logId;
       }).filter(function(logId) {
         if (!logId) {
           return false;
@@ -1101,11 +1162,6 @@ var Index = React.createClass({
 
     self._updateNetwork = update;
     self.autoRefresh = scrollToBottom;
-    self.stopAutoRefresh = function() {
-      if (atBottom()) {
-        con.scrollTop = con.scrollTop - 10;
-      }
-    };
     self.scrollerAtBottom = atBottom;
 
     function atBottom() {
@@ -1123,7 +1179,25 @@ var Index = React.createClass({
       hasPlugins: true,
       name: 'plugins'
     });
-    changePageName('plugins');
+    util.changePageName('plugins');
+  },
+  handleAction: function(type) {
+    if (type === 'top') {
+      $(ReactDOM.findDOMNode(this.refs.network))
+        .find('.w-req-data-list')[0].scrollTop = 0;
+      return;
+    }
+    if (type === 'bottom') {
+      return this.autoRefresh();
+    }
+    if (type === 'pause') {
+      return dataCenter.pauseNetworkRecord();
+    }
+    var refresh = type === 'refresh';
+    dataCenter.stopNetworkRecord(!refresh);
+    if (refresh) {
+      return this.autoRefresh();
+    }
   },
   showNetwork: function(e) {
     if (this.state.name == 'network') {
@@ -1137,7 +1211,7 @@ var Index = React.createClass({
     }, function() {
       this.startLoadData();
     });
-    changePageName('network');
+    util.changePageName('network');
   },
   handleNetwork: function(item, e) {
     var modal = this.state.network;
@@ -1316,7 +1390,7 @@ var Index = React.createClass({
     }
 
     if (file.size > MAX_OBJECT_SIZE) {
-      return alert('The file size can not exceed 6m.');
+      return alert('The file size cannot exceed 6m.');
     }
     if ($(e.target).hasClass('btn-danger')) {
       data.append('replaceAll', '1');
@@ -1345,7 +1419,7 @@ var Index = React.createClass({
     }
 
     if (file.size > MAX_OBJECT_SIZE) {
-      return alert('The file size can not exceed 6m.');
+      return alert('The file size cannot exceed 6m.');
     }
     if ($(e.target).hasClass('btn-danger')) {
       data.append('replaceAll', '1');
@@ -1401,11 +1475,11 @@ var Index = React.createClass({
       hasRules: true,
       name: 'rules'
     });
-    changePageName('rules');
+    util.changePageName('rules');
   },
   showAndActiveValues: function(item, e) {
     var self = this;
-    if (self.state.name === 'values') {
+    if (self.state.name === 'values' && item.id) {
       switch(item.id) {
       case 'exportValues':
         self.refs.selectValuesDialog.show();
@@ -1449,7 +1523,7 @@ var Index = React.createClass({
       hasValues: true,
       name: 'values'
     });
-    changePageName('values');
+    util.changePageName('values');
   },
   showNetworkOptions: function() {
     if (this.state.name == 'network') {
@@ -1461,6 +1535,7 @@ var Index = React.createClass({
   hideNetworkOptions: function() {
     this.setState({
       showRemoveOptions: false,
+      showAbortOptions: false,
       showNetworkOptions: false
     });
   },
@@ -1469,9 +1544,22 @@ var Index = React.createClass({
       showRemoveOptions: true
     });
   },
+  showAbortOptions: function() {
+    var modal = this.state.network;
+    var list = modal && modal.getSelectedList();
+    ABORT_OPTIONS[0].disabled = !list || !list.filter(util.canAbort).length;
+    this.setState({
+      showAbortOptions: true
+    });
+  },
   hideRemoveOptions: function() {
     this.setState({
       showRemoveOptions: false
+    });
+  },
+  hideAbortOptions: function() {
+    this.setState({
+      showAbortOptions: false
     });
   },
   showHelpOptions: function() {
@@ -1699,13 +1787,13 @@ var Index = React.createClass({
     var target = ReactDOM.findDOMNode(self.refs.createRulesInput);
     var name = $.trim(target.value);
     if (!name) {
-      alert('The name can not be empty.');
+      message.error('The name cannot be empty.');
       return;
     }
 
     var modal = self.state.rules;
     if (modal.exists(name)) {
-      alert('The name \'' + name + '\' already exists.');
+      message.error('The name \'' + name + '\' already exists.');
       return;
     }
 
@@ -1732,23 +1820,23 @@ var Index = React.createClass({
     var target = ReactDOM.findDOMNode(self.refs.createValuesInput);
     var name = $.trim(target.value);
     if (!name) {
-      alert('The name can not be empty.');
+      message.error('The name cannot be empty.');
       return;
     }
 
     if (/\s/.test(name)) {
-      alert('The name can not contain spaces.');
+      message.error('The name cannot contain spaces.');
       return;
     }
 
     if (/#/.test(name)) {
-      alert('The name can not contain #.');
+      message.error('The name cannot contain #.');
       return;
     }
 
     var modal = self.state.values;
     if (modal.exists(name)) {
-      alert('The name \'' + name + '\' already exists.');
+      message.error('The name \'' + name + '\' already exists.');
       return;
     }
 
@@ -1818,12 +1906,12 @@ var Index = React.createClass({
     var target = ReactDOM.findDOMNode(self.refs.editRulesInput);
     var name = $.trim(target.value);
     if (!name) {
-      alert('Rule name can not be empty.');
+      message.error('The rule group name cannot be empty.');
       return;
     }
 
     if (modal.exists(name)) {
-      alert('Rule name \'' + name + '\' already exists.');
+      message.error('The rule group name \'' + name + '\' already exists.');
       return;
     }
 
@@ -1857,12 +1945,12 @@ var Index = React.createClass({
     var target = ReactDOM.findDOMNode(self.refs.editValuesInput);
     var name = $.trim(target.value);
     if (!name) {
-      alert('Rule name can not be empty.');
+      message.error('The rule group name cannot be empty.');
       return;
     }
 
     if (modal.exists(name)) {
-      alert('Rule name \'' + name + '\' already exists.');
+      message.error('The rule group name \'' + name + '\' already exists.');
       return;
     }
 
@@ -2004,10 +2092,14 @@ var Index = React.createClass({
   composer: function() {
     events.trigger('composer');
   },
+  showFiles: function() {
+    this.refs.filesDialog.show(this.files);
+  },
   clear: function() {
     var modal = this.state.network;
     modal && this.setState({
-      network: modal.clear()
+      network: modal.clear(),
+      showRemoveOptions: false
     });
   },
   removeRules: function(item) {
@@ -2016,7 +2108,7 @@ var Index = React.createClass({
     var activeItem = item || modal.getActive();
     if (activeItem && !activeItem.isDefault) {
       var name = activeItem.name;
-      if (confirm('Confirm delete this Rule \'' + name + '\'.')) {
+      if (confirm('Are you sure to delete this rule group \'' + name + '\'.')) {
         dataCenter.rules.remove({name: name}, function(data, xhr) {
           if (data && data.ec === 0) {
             var nextItem = item && !item.active ? null : modal.getSibling(name);
@@ -2039,7 +2131,7 @@ var Index = React.createClass({
     var activeItem = item || modal.getActive();
     if (activeItem && !activeItem.isDefault) {
       var name = activeItem.name;
-      if (confirm('Confirm delete this Value \'' + name + '\'.')) {
+      if (confirm('Are you sure to delete this Value \'' + name + '\'.')) {
         dataCenter.values.remove({name: name}, function(data, xhr) {
           if (data && data.ec === 0) {
             var nextItem = item && !item.active ? null : modal.getSibling(name);
@@ -2056,13 +2148,15 @@ var Index = React.createClass({
       }
     }
   },
-  setRulesActive: function(name) {
+  setRulesActive: function(name, modal) {
+    modal = modal || this.state.rules;
     storage.set('activeRules', name);
-    this.state.rules.setActive(name);
+    modal.setActive(name);
   },
-  setValuesActive: function(name) {
+  setValuesActive: function(name, modal) {
+    modal = modal || this.state.values;
     storage.set('activeValues', name);
-    this.state.values.setActive(name);
+    modal.setActive(name);
   },
   showRulesSettings: function() {
     $(ReactDOM.findDOMNode(this.refs.rulesSettingsDialog)).modal('show');
@@ -2177,11 +2271,13 @@ var Index = React.createClass({
   disableAllRules: function(e) {
     var checked = e.target.checked;
     var self = this;
+    
     dataCenter.rules.disableAllRules({disabledAllRules: checked ? 1 : 0}, function(data, xhr) {
       if (data && data.ec === 0) {
-        self.setState({
-          disabledAllRules: checked
-        });
+        var state = self.state;
+        state.disableAllRules = checked;
+        protocols.setPlugins(state);
+        self.setState({});
       } else {
         util.showSystemError(xhr);
       }
@@ -2226,6 +2322,23 @@ var Index = React.createClass({
       }
     });
   },
+  abort: function(list) {
+    if (!Array.isArray(list)) {
+      var modal = this.state.network;
+      list = modal && modal.getSelectedList();
+    }
+    if (list) {
+      list = list.map(function(item) {
+        if (util.canAbort(item)) {
+          return item.id;
+        }
+      });
+      if (list.length) {
+        dataCenter.abort({ list: list.join() });
+      }
+    }
+    this.hideAbortOptions();
+  },
   allowMultipleChoice: function(e) {
     var self = this;
     var checked = e.target.checked;
@@ -2263,7 +2376,7 @@ var Index = React.createClass({
     var self = this;
     var modal = self.state.rules;
     var defaultRules = modal.data['Default'];
-    if (!(defaultRules.value || '').trim() || confirm('Confirm overwrite the original Default data?')) {
+    if (!(defaultRules.value || '').trim() || confirm('Are you sure to overwrite the original Default data?')) {
       dataCenter.rules.getSysHosts(function(data) {
         if (data.ec !== 0) {
           alert(data.em);
@@ -2371,16 +2484,14 @@ var Index = React.createClass({
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return alert('The file size can not exceed 64m.');
+      return alert('The file size cannot exceed 64m.');
     }
     var isText = /\.txt$/i.test(file.name);
     if (isText || /\.har$/i.test(file.name)) {
       var self = this;
-      var reader = new FileReader();
-      reader.readAsText(file);
-      reader.onload = function(){
+      util.readFileAsText(file, function(result) {
         try {
-          var result = JSON.parse(this.result);
+          result = JSON.parse(result);
           if (isText) {
             dataCenter.addNetworkList(result);
           } else {
@@ -2389,7 +2500,7 @@ var Index = React.createClass({
         } catch (e) {
           alert('Incorrect file format.');
         }
-      };
+      });
       return;
     }
     dataCenter.upload.importSessions(data, dataCenter.addNetworkList);
@@ -2435,6 +2546,7 @@ var Index = React.createClass({
   render: function() {
     var state = this.state;
     var networkMode = state.networkMode;
+    var multiEnv = state.multiEnv;
     var name = networkMode ? 'network' : state.name;
     var isNetwork = name === undefined || name == 'network';
     var isRules = name == 'rules';
@@ -2442,12 +2554,12 @@ var Index = React.createClass({
     var isPlugins = name == 'plugins';
     var disabledEditBtn = true;
     var disabledDeleteBtn = true;
-    var rulesTheme = 'cobalt';
-    var valuesTheme = 'cobalt';
-    var rulesFontSize = '14px';
-    var valuesFontSize = '14px';
-    var showRulesLineNumbers = false;
-    var showValuesLineNumbers = false;
+    var rulesTheme = state.rulesTheme || 'cobalt';
+    var valuesTheme = state.valuesTheme || 'cobalt';
+    var rulesFontSize = state.rulesFontSize || '14px';
+    var valuesFontSize = state.valuesFontSize || '14px';
+    var showRulesLineNumbers = state.showRulesLineNumbers || false;
+    var showValuesLineNumbers = state.showValuesLineNumbers || false;
     var rulesOptions = state.rulesOptions;
     var pluginsOptions = state.pluginsOptions;
     var uncheckedRules = {};
@@ -2457,11 +2569,6 @@ var Index = React.createClass({
     var showPluginsOptions = state.showPluginsOptions;
     var showWeinreOptions = state.showWeinreOptions;
     var showHelpOptions = state.showHelpOptions;
-    var hasFilterText;
-
-    if (isNetwork) {
-      hasFilterText = dataCenter.isOnlyViewOwnData() || state.hasFilterText;
-    }
 
     if (rulesOptions[0].name === DEFAULT) {
       rulesOptions.forEach(function(item, i) {
@@ -2471,6 +2578,7 @@ var Index = React.createClass({
         }
       });
     }
+
     var i, data;
     if (isRules) {
       data = state.rules.data;
@@ -2480,18 +2588,6 @@ var Index = React.createClass({
           break;
         }
       }
-      if (state.rulesTheme) {
-        rulesTheme = state.rulesTheme;
-      }
-
-      if (state.rulesFontSize) {
-        rulesFontSize = state.rulesFontSize;
-      }
-
-      if (state.showRulesLineNumbers) {
-        showRulesLineNumbers = state.showRulesLineNumbers;
-      }
-
     } else if (isValues) {
       data = state.values.data;
       for (i in data) {
@@ -2500,19 +2596,14 @@ var Index = React.createClass({
           break;
         }
       }
-      if (state.valuesTheme) {
-        valuesTheme = state.valuesTheme;
-      }
-
-      if (state.valuesFontSize) {
-        valuesFontSize = state.valuesFontSize;
-      }
-
-      if (state.showValuesLineNumbers) {
-        showValuesLineNumbers = state.showValuesLineNumbers;
-      }
     }
     if (state.network) {
+      state.network.rulesModal = state.rules;
+      state.rules.editorTheme = {
+        theme: rulesTheme,
+        fontSize: rulesFontSize,
+        lineNumbers: showRulesLineNumbers
+      };
       var networkOptions = state.networkOptions;
       var hasUnselected = state.network.hasUnselected();
       if (state.network.hasSelected()) {
@@ -2555,8 +2646,8 @@ var Index = React.createClass({
       <div className={'main orient-vertical-box' + (showLeftMenu ? ' w-show-left-menu' : '')}>
         <div className={'w-menu w-' + name + '-menu-list'}>
           <a onClick={this.toggleLeftMenu} href="javascript:;" draggable="false" className="w-show-left-menu-btn"
-            style={{background: showLeftMenu ? '#ddd' : undefined, display: networkMode ? 'none' : undefined}} title="Ctrl[Command] + M">
-            <span className={'glyphicon glyphicon-chevron-' + (showLeftMenu ? 'down' : 'right')}></span>
+            style={{display: networkMode ? 'none' : undefined}} title={'Dock to ' + (showLeftMenu ? 'top' : 'left') + ' (Ctrl[Command] + M)'}>
+            <span className={'glyphicon glyphicon-chevron-' + (showLeftMenu ? 'up' : 'left')}></span>
           </a>
           <div onMouseEnter={this.showNetworkOptions} onMouseLeave={this.hideNetworkOptions} className={'w-nav-menu w-menu-wrapper' + (showNetworkOptions ? ' w-menu-wrapper-show' : '')}>
             <a onClick={this.showNetwork} onDoubleClick={this.clearNetwork} className="w-network-menu" title="Double click to remove all sessions" style={{background: name == 'network' ? '#ddd' : null}}
@@ -2583,11 +2674,12 @@ var Index = React.createClass({
               className="w-plugins-menu-item" onClick={this.showPlugins} onChange={this.disablePlugin} onClickOption={this.showAndActivePlugins} />
           </div>
           <a onClick={this.disableAllPlugins} className="w-enable-plugin-menu"
-            style={{display: isPlugins ? '' : 'none'}} href="javascript:;"
+            style={{display: isPlugins ? '' : 'none', color: disabledAllPlugins ? '#f66' : undefined}} href="javascript:;"
             draggable="false">
             <span className={'glyphicon glyphicon-' + (disabledAllPlugins ? 'ok-circle' : 'ban-circle')}/>
             {disabledAllPlugins ? 'EnableAll' : 'DisableAll'}
           </a>
+          <UpdateAllBtn hide={!isPlugins} />
           <a onClick={this.importData} className="w-import-menu"
             style={{display: isPlugins ? 'none' : ''}} href="javascript:;"
             draggable="false">
@@ -2609,12 +2701,21 @@ var Index = React.createClass({
           <a onClick={this.onClickMenu} className="w-save-menu" style={{display: (isNetwork || isPlugins) ? 'none' : ''}} href="javascript:;" draggable="false" title="Ctrl[Command] + S"><span className="glyphicon glyphicon-save-file"></span>Save</a>
           <a onClick={this.onClickMenu} className="w-create-menu" style={{display: (isNetwork || isPlugins) ? 'none' : ''}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-plus"></span>Create</a>
           <a onClick={this.onClickMenu} className={'w-edit-menu' + (disabledEditBtn ? ' w-disabled' : '')} style={{display: (isNetwork || isPlugins) ? 'none' : ''}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-edit"></span>Rename</a>
-          <a onClick={this.autoRefresh} onDoubleClick={this.stopAutoRefresh} title={'Click to scroll to the bottom\nDouble click to stop scroll'}
-            className="w-scroll-menu" style={{display: isNetwork ? '' : 'none'}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-play"></span>AutoRefresh</a>
-          <a onClick={this.replay} className="w-replay-menu" style={{display: isNetwork ? '' : 'none'}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-repeat"></span>Replay</a>
-          <a onClick={this.composer} className="w-composer-menu" style={{display: isNetwork ? '' : 'none'}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-edit"></span>Composer</a>
+          <div onMouseEnter={this.showAbortOptions} onMouseLeave={this.hideAbortOptions}
+            style={{display: isNetwork ? '' : 'none'}}
+            className={'w-menu-wrapper w-abort-menu-list w-menu-auto' + (state.showAbortOptions ? ' w-menu-wrapper-show' : '')}>
+            <a onClick={this.replay} className="w-replay-menu"
+              style={{display: isNetwork ? '' : 'none'}} href="javascript:;"
+              draggable="false">
+              <span className="glyphicon glyphicon-repeat"></span>Replay
+            </a>
+            <MenuItem options={ABORT_OPTIONS} className="w-remove-menu-item" onClickOption={this.abort} />
+          </div>
+          <a onClick={this.composer} className="w-composer-menu" style={{display: isNetwork ? '' : 'none'}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-edit"></span>Compose</a>
+          <RecordBtn hide={!isNetwork} onClick={this.handleAction} />
           <a onClick={this.onClickMenu} className={'w-delete-menu' + (disabledDeleteBtn ? ' w-disabled' : '')} style={{display: (isNetwork || isPlugins) ? 'none' : ''}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-trash"></span>Delete</a>
-          <a onClick={this.showSettings} className={'w-settings-menu' + (hasFilterText ? ' w-menu-enable'  : '')} style={{display: (isPlugins) ? 'none' : ''}} href="javascript:;" draggable="false"><span className="glyphicon glyphicon-cog"></span>Settings</a>
+          <FilterBtn onClick={this.showSettings} isNetwork={isNetwork} hide={isPlugins} />
+          <a onClick={this.showFiles} className="w-files-menu" href="javascript:;" draggable="false"><span className="glyphicon glyphicon-upload"></span>Files</a>
           <div onMouseEnter={this.showWeinreOptions} onMouseLeave={this.hideWeinreOptions} className={'w-menu-wrapper' + (showWeinreOptions ? ' w-menu-wrapper-show' : '')}>
             <a onClick={this.showWeinreOptionsQuick}
               onDoubleClick={this.showAnonymousWeinre}
@@ -2648,14 +2749,20 @@ var Index = React.createClass({
               style={{background: name == 'network' ? '#ddd' : null}}
               href="javascript:;"  draggable="false">
                 <span className="glyphicon glyphicon-globe"></span>
-                <span className="w-left-menu-tips">Network</span>
+                <span className="w-left-menu-tips">
+                  <i className="w-arrow w-arrow-left"></i>
+                  Network
+                </span>
             </a>
             <a onClick={this.showRules} className="w-save-menu w-rules-menu"
               onDoubleClick={this.onClickMenu}
               title={name == 'rules' ? 'Double click to save all changed' : undefined}
               style={{background: name == 'rules' ? '#ddd' : null}} href="javascript:;" draggable="false">
               <span className={'glyphicon glyphicon-list' + (state.disabledAllRules ? ' w-disabled' : '')} ></span>
-              <span className="w-left-menu-tips">Rules</span>
+              <span className="w-left-menu-tips">
+                <i className="w-arrow w-arrow-left"></i>
+                Rules
+              </span>
               <i className="w-menu-changed" style={{display: state.rules.hasChanged() ? undefined : 'none'}}>*</i>
             </a>
             <a onClick={this.showValues} className="w-save-menu w-values-menu"
@@ -2663,15 +2770,20 @@ var Index = React.createClass({
               title={name == 'values' ? 'Double click to save all changed' : undefined}
               style={{background: name == 'values' ? '#ddd' : null}} href="javascript:;" draggable="false">
               <span className="glyphicon glyphicon-folder-open"></span>
-              <span className="w-left-menu-tips">Values</span>
+              <span className="w-left-menu-tips">
+                <i className="w-arrow w-arrow-left"></i>
+                Values
+              </span>
               <i className="w-menu-changed" style={{display: state.values.hasChanged() ? undefined : 'none'}}>*</i>
             </a>
             <a onClick={this.showPlugins} className="w-plugins-menu"
-              onDoubleClick={this.disableAllPlugins}
-              title={name == 'plugins' ? 'Double to ' + (state.disabledAllPlugins ? 'enable' : 'disable') + ' all plugins': undefined}
+              title={name == 'plugins' ? 'Double click to ' + (state.disabledAllPlugins ? 'enable' : 'disable') + ' all plugins': undefined}
               style={{background: name == 'plugins' ? '#ddd' : null}} href="javascript:;" draggable="false">
               <span className={'glyphicon glyphicon-list-alt' + (disabledAllPlugins ? ' w-disabled' : '')}></span>
-              <span className="w-left-menu-tips">Plugins</span>
+              <span className="w-left-menu-tips">
+                <i className="w-arrow w-arrow-left"></i>
+                Plugins
+              </span>
             </a>
           </div>
           {state.hasRules ? <List ref="rules" disabled={state.disabledAllRules} theme={rulesTheme} fontSize={rulesFontSize} lineNumbers={showRulesLineNumbers} onSelect={this.selectRules} onUnselect={this.unselectRules} onActive={this.activeRules} modal={state.rules} hide={name == 'rules' ? false : true} name="rules" /> : undefined}
@@ -2717,7 +2829,7 @@ var Index = React.createClass({
               </div>
             </div>
         </div>
-        <NetworkSettings ref="networkSettings" onFilterTextChanged={this.setFilterTextState} />
+        <NetworkSettings ref="networkSettings" />
         <div ref="rootCADialog" className="modal fade w-https-dialog">
         <div className="modal-dialog">
             <div className="modal-content">
@@ -2731,9 +2843,13 @@ var Index = React.createClass({
                   </a>
                   <a className="w-download-rootca" title="http://rootca.pro/" href="cgi-bin/rootca" target="downloadTargetFrame">Download RootCA</a>
                 </div>
-                <a title="http://rootca.pro/" href="cgi-bin/rootca" target="downloadTargetFrame"><img src="img/rootca.png" /></a>
+                <a title="http://rootca.pro/" href="cgi-bin/rootca" target="downloadTargetFrame"><img src="img/qrcode.png" /></a>
                 <div className="w-https-settings">
-                  <p><label><input checked={state.interceptHttpsConnects} onChange={this.interceptHttpsConnects} type="checkbox" /> Capture HTTPS CONNECTs</label></p>
+                  <p><label title={multiEnv ? 'Use `pattern enable://capture` in rules to replace global configuration' : undefined}><input
+                    disabled={multiEnv}
+                    checked={state.interceptHttpsConnects}
+                    onChange={this.interceptHttpsConnects}
+                    type="checkbox" /> Capture TUNNEL CONNECTs</label></p>
                 </div>
               </div>
               <div className="modal-footer">
@@ -2825,7 +2941,7 @@ var Index = React.createClass({
                 <p className="w-show-update-tips">whistle has important updates, it is recommended that you update to the latest version.</p>
                 <p>Current version: {state.version}</p>
                 <p>The latest stable version: {state.latestVersion}</p>
-                <p>View change: <a title="Change log" href={'https://github.com/avwo/whistle/blob/master/CHANGELOG.md#v' + (state.latestVersion || '-').replace(/\./g, '')} target="_blank">CHANGELOG.md</a></p>
+                <p>View change: <a title="Change log" href="https://github.com/avwo/whistle/blob/master/CHANGELOG.md" target="_blank">CHANGELOG.md</a></p>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-default" onClick={this.donotShowAgain} data-dismiss="modal">Don't show again</button>
@@ -2874,6 +2990,7 @@ var Index = React.createClass({
             onClick={this.uploadValues} data-dismiss="modal">Reserve</button>
         </div>
       </Dialog>
+      <FilesDialog ref="filesDialog" />
       <ListDialog ref="selectRulesDialog" name="rules" list={state.rules.list} />
       <ListDialog ref="selectValuesDialog" name="values" list={state.values.list} />
       <iframe name="downloadTargetFrame" style={{display: 'none'}} />
